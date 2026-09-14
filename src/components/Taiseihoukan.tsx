@@ -59,7 +59,7 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
     const finalInformativeCount = finalAnswers.filter((a) => a.value !== null).length;
     const finalAskedIds = new Set(finalAnswers.map((a) => a.questionId));
     const decision = decisionQuality(model, finalDist, finalAskedIds, finalAnswers);
-    const secondary = decision.actionable ? secondaryCandidate(finalDist) : null;
+    const secondary = secondaryCandidate(finalDist);
     const primaryState = model.states.find((state) => state.id === primaryId);
     const secondaryState = secondary ? model.states.find((state) => state.id === secondary.secondaryId) : undefined;
     const entry: AuditHistoryEntry = {
@@ -122,7 +122,7 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
       <div className="audit-result-grid">
         <Panel><h3>{resolved ? '推奨処理' : '暫定推奨処理'}</h3><ul>{primary?.recommendedActions.slice(0, 3).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
         <Panel><h3>{resolved ? '回避処理' : '暫定回避処理'}</h3><ul>{primary?.avoidActions.slice(0, 3).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
-        <Panel><h3>副状態候補</h3>{resolved && latestSecondary && secondaryInfo ? <><strong>{latestSecondary.label} {Math.round(secondaryInfo.secondaryProbability * 100)}%</strong>{latestSecondary.description && <p>{latestSecondary.description}</p>}<p className="muted">副状態の recommendedActions / avoidActions は自動適用しません。主状態との矛盾を避けるための仕様です。</p></> : <p className="muted">{resolved ? '行動決定に影響させるほど明瞭な副状態候補はありません。' : '暫定判定では副状態を記録しません。'}</p>}</Panel>
+        <Panel><h3>{resolved ? '副状態候補' : '参考副状態'}</h3>{latestSecondary && secondaryInfo ? <><strong>{latestSecondary.label} {Math.round(secondaryInfo.secondaryProbability * 100)}%</strong>{latestSecondary.description && <p>{latestSecondary.description}</p>}<p className="muted">副状態の recommendedActions / avoidActions は自動適用しません。主状態との矛盾を避けるための仕様です。</p></> : <p className="muted">副状態候補はありません。</p>}</Panel>
         <Panel><h3>{resolved ? '候補分布' : '参考候補'}</h3>{displayCandidates.length ? <ol className="audit-ranking">{displayCandidates.map((x) => <li key={x.state!.id}><span>{x.state!.label}</span><strong>{Math.round(x.probability * 100)}%</strong></li>)}</ol> : <p className="muted">{Math.round(AUDIT_CANDIDATE_DISPLAY_THRESHOLD * 100)}％以上の有力候補はありません。</p>}</Panel>
         <Panel><h3>根拠</h3><ul>{influentialAnswers(model, answers, dist).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
         {primary?.reauditConditions?.length ? <Panel><h3>再監査条件</h3><ul>{primary.reauditConditions.map((x, i) => <li key={i}>{x}</li>)}</ul></Panel> : null}

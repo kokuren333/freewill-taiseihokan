@@ -15,9 +15,9 @@ const TIE_BREAK_WEIGHT = 0.08;
 // ただし1〜2問の偶然の偏りだけで終了しないための安全ガードは残す。
 export const AUDIT_MIN_QUESTIONS = 3;
 export const AUDIT_MIN_INFORMATIVE_ANSWERS = 3;
-export const AUDIT_PRIMARY_PROBABILITY_THRESHOLD = 0.50;
-export const AUDIT_PRIMARY_GAP_THRESHOLD = 0.15;
-export const AUDIT_WINNER_RETENTION_THRESHOLD = 0.85;
+export const AUDIT_PRIMARY_PROBABILITY_THRESHOLD = 0.40;
+export const AUDIT_PRIMARY_GAP_THRESHOLD = 0.10;
+export const AUDIT_WINNER_RETENTION_THRESHOLD = 0.75;
 export const AUDIT_CANDIDATE_DISPLAY_THRESHOLD = 0.08;
 
 export function normalize(dist: Distribution): Distribution {
@@ -201,8 +201,8 @@ export function secondaryCandidate(dist: Distribution) {
   const [secondaryId, secondaryProbability] = ranked[1] ?? ['', 0];
   if (!secondaryId || primaryProbability <= 0) return null;
   const relative = secondaryProbability / primaryProbability;
-  // 絶対確率だけでなく主状態との相対比も見る。24状態程度でも副状態を落としすぎない。
-  if (secondaryProbability >= 0.12 || (secondaryProbability >= 0.08 && relative >= 0.35)) {
+  // 状態数を8〜12へ絞ったため、主状態に近い有力候補も参考副状態として残す。
+  if (secondaryProbability >= 0.10 || (secondaryProbability >= 0.07 && relative >= 0.30)) {
     return { primaryId, primaryProbability, secondaryId, secondaryProbability };
   }
   return null;
