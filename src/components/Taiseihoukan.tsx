@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import type { AuditAnswer, AuditHistoryEntry, ObjectionDraft, TaiseihoukanData } from '../types';
 import type { Distribution } from '../lib/audit';
-import { AUDIT_MAX_QUESTIONS, AUDIT_MIN_QUESTIONS, AUDIT_TARGET_QUESTIONS, chooseNextQuestion, confidenceFor, distributionAfterAnswers, influentialAnswers, initialDistribution, rankedStates, secondaryCandidate, shouldStop, updateDistribution } from '../lib/audit';
+import { AUDIT_CANDIDATE_DISPLAY_THRESHOLD, AUDIT_MIN_QUESTIONS, chooseNextQuestion, confidenceFor, decisionQuality, distributionAfterAnswers, influentialAnswers, initialDistribution, rankedStates, secondaryCandidate, shouldStop, updateDistribution } from '../lib/audit';
 import { Button, Notice, Panel, ProgressBar } from './Common';
 import { objectionTargetCount, objectionTargetLabels } from '../data/objection';
 
@@ -56,12 +56,15 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
   const finalize = (finalDist = dist, finalAnswers = answers) => {
     const rankedFinal = rankedStates(finalDist);
     const [primaryId, probability] = rankedFinal[0] ?? ['', 0];
-    const secondary = secondaryCandidate(finalDist);
     const finalInformativeCount = finalAnswers.filter((a) => a.value !== null).length;
+    const finalAskedIds = new Set(finalAnswers.map((a) => a.questionId));
+    const decision = decisionQuality(model, finalDist, finalAskedIds, finalAnswers);
+    const secondary = decision.actionable ? secondaryCandidate(finalDist) : null;
     const primaryState = model.states.find((state) => state.id === primaryId);
     const secondaryState = secondary ? model.states.find((state) => state.id === secondary.secondaryId) : undefined;
     const entry: AuditHistoryEntry = {
       id: crypto.randomUUID(), createdAt: new Date().toISOString(), answers: finalAnswers,
+      status: decision.actionable ? 'resolved' : 'provisional',
       primaryStateId: primaryId,
       primaryStateLabel: primaryState?.label,
       probability,
@@ -102,20 +105,25 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
   if (finished) {
     const primary = latestPrimary;
     const topThree = ranked.slice(0, 3).map(([id, probability]) => ({ state: model.states.find((s) => s.id === id), probability })).filter((x) => x.state);
+    const displayCandidates = topThree.filter((x) => x.probability >= AUDIT_CANDIDATE_DISPLAY_THRESHOLD);
+    const decision = decisionQuality(model, dist, askedIds, answers);
+    const resolved = decision.actionable;
     return <div className="stack-lg">
-      <Notice tone="info"><strong>決定規則:</strong> 基本方針の制約・維持条件を最優先し、その範囲内で主状態の推奨処理を採用します。副状態は解釈補助であり、主状態の行動を追加・上書きしません。</Notice>
+      <Notice tone={resolved ? 'info' : 'warn'}>{resolved
+        ? <><strong>決定規則:</strong> 基本方針の制約・維持条件を最優先し、その範囲内で主状態の推奨処理を採用します。副状態は解釈補助であり、主状態の行動を追加・上書きしません。</>
+        : <><strong>暫定判定:</strong> 候補を十分に絞り込めなかったため、最上位候補を暫定主状態として採用します。</>}</Notice>
       <Panel>
-        <p className="eyebrow">主状態 / ACTION ROUTE</p>
+        <p className="eyebrow">{resolved ? '主状態 / ACTION ROUTE' : '暫定主状態 / PROVISIONAL ACTION ROUTE'}</p>
         <h2>{primary?.label ?? '判定不能'}</h2>
         <p className="audit-prob">{Math.round((ranked[0]?.[1] ?? 0) * 100)}%</p>
         <p>信頼度: {confidence === 'high' ? '高' : confidence === 'medium' ? '中' : '低'}</p>
-        <p className="muted">{answers.length}問を探索（有効回答 {informativeCount}）。推奨処理はこの主状態のみから決定します。</p>
+        <p className="muted">{answers.length}問を探索（有効回答 {informativeCount}）。{resolved ? '推奨処理はこの主状態のみから決定します。' : '確定条件は未達ですが、監査を終了してこの候補を暫定ルートに採用しました。'}</p>
       </Panel>
       <div className="audit-result-grid">
-        <Panel><h3>推奨処理</h3><ul>{primary?.recommendedActions.slice(0, 3).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
-        <Panel><h3>回避処理</h3><ul>{primary?.avoidActions.slice(0, 3).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
-        <Panel><h3>副状態候補</h3>{latestSecondary && secondaryInfo ? <><strong>{latestSecondary.label} {Math.round(secondaryInfo.secondaryProbability * 100)}%</strong>{latestSecondary.description && <p>{latestSecondary.description}</p>}<p className="muted">副状態の recommendedActions / avoidActions は自動適用しません。主状態との矛盾を避けるための仕様です。</p></> : <p className="muted">行動決定に影響させるほど明瞭な副状態候補はありません。</p>}</Panel>
-        <Panel><h3>候補分布</h3><ol className="audit-ranking">{topThree.map((x, i) => <li key={x.state!.id}><span>{i === 0 ? '主' : i === 1 ? '次' : '候補'}: {x.state!.label}</span><strong>{Math.round(x.probability * 100)}%</strong></li>)}</ol></Panel>
+        <Panel><h3>{resolved ? '推奨処理' : '暫定推奨処理'}</h3><ul>{primary?.recommendedActions.slice(0, 3).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
+        <Panel><h3>{resolved ? '回避処理' : '暫定回避処理'}</h3><ul>{primary?.avoidActions.slice(0, 3).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
+        <Panel><h3>副状態候補</h3>{resolved && latestSecondary && secondaryInfo ? <><strong>{latestSecondary.label} {Math.round(secondaryInfo.secondaryProbability * 100)}%</strong>{latestSecondary.description && <p>{latestSecondary.description}</p>}<p className="muted">副状態の recommendedActions / avoidActions は自動適用しません。主状態との矛盾を避けるための仕様です。</p></> : <p className="muted">{resolved ? '行動決定に影響させるほど明瞭な副状態候補はありません。' : '暫定判定では副状態を記録しません。'}</p>}</Panel>
+        <Panel><h3>{resolved ? '候補分布' : '参考候補'}</h3>{displayCandidates.length ? <ol className="audit-ranking">{displayCandidates.map((x) => <li key={x.state!.id}><span>{x.state!.label}</span><strong>{Math.round(x.probability * 100)}%</strong></li>)}</ol> : <p className="muted">{Math.round(AUDIT_CANDIDATE_DISPLAY_THRESHOLD * 100)}％以上の有力候補はありません。</p>}</Panel>
         <Panel><h3>根拠</h3><ul>{influentialAnswers(model, answers, dist).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
         {primary?.reauditConditions?.length ? <Panel><h3>再監査条件</h3><ul>{primary.reauditConditions.map((x, i) => <li key={i}>{x}</li>)}</ul></Panel> : null}
       </div>
@@ -125,9 +133,9 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
 
   return <div className="audit-shell">
     <Panel>
-      <div className="section-heading"><div><h2>状態監査</h2><p>現在の状態パターンを探索し、事前に定義された行動様式へルーティングします。1〜3回答だけで確定せず、複数方向から確認します。</p></div><span className="status-chip">通常 {AUDIT_TARGET_QUESTIONS}〜{AUDIT_MAX_QUESTIONS}問</span></div>
-      <ProgressBar value={answers.length} max={AUDIT_MAX_QUESTIONS} label={`${answers.length} / ${AUDIT_MAX_QUESTIONS}`} />
-      <p className="muted">最低探索数 {AUDIT_MIN_QUESTIONS}問。AI推論は実行せず、読み込まれた状態モデルと回答だけで次質問を選択します。</p>
+      <div className="section-heading"><div><h2>状態監査</h2><p>現在の状態パターンを探索し、事前に定義された行動様式へルーティングします。候補が十分に安定した時点で終了し、情報が増えなくなった場合は暫定判定します。</p></div><span className="status-chip">通常 3問〜</span></div>
+      <ProgressBar value={answers.length} max={model.questions.length} label={`${answers.length} / ${model.questions.length}`} />
+      <p className="muted">{AUDIT_MIN_QUESTIONS}問目以降、候補が十分に安定した時点で終了します。質問バンクを使い切るか情報が増えなくなった場合も、最上位候補で必ず判定します。AI推論は実行せず、読み込まれた状態モデルと回答だけで次質問を選択します。</p>
     </Panel>
     {next ? <Panel className="audit-question-panel">
       <p className="eyebrow">QUESTION {answers.length + 1}</p>
@@ -135,7 +143,7 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
       <p className="muted">質問選択スコア: {next.selectionScore.toFixed(3)} / 情報利得: {next.informationGain.toFixed(3)} bits</p>
       <div className="audit-answer-grid">{answerOptions.map((o) => <Button key={String(o.value)} variant={o.value === null ? 'quiet' : 'default'} onClick={() => answer(o.value)}>{o.label}</Button>)}</div>
       {answers.length > 0 && <div className="audit-question-actions"><Button variant="quiet" onClick={undoLast}>1問戻る</Button><span className="muted">誤入力した場合、直前の回答を取り消して分布を再計算できます。</span></div>}
-    </Panel> : <Notice tone="warn">未質問の質問候補がありません。現在分布で判定します。<div><Button onClick={() => finalize()}>判定を表示</Button></div></Notice>}
+    </Panel> : <Notice tone="warn">未質問の質問候補がありません。現在分布の最上位候補で判定します。<div><Button onClick={() => finalize()}>判定を表示</Button></div></Notice>}
   </div>;
 }
 

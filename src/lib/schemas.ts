@@ -130,6 +130,7 @@ export const auditHistorySchema = {
     properties: {
       id: { type: 'string', minLength: 1 },
       createdAt: { type: 'string' },
+      status: { enum: ['resolved', 'provisional', 'held'] },
       answers: {
         type: 'array',
         items: {

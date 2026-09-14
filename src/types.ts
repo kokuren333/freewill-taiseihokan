@@ -108,6 +108,8 @@ export interface AuditHistoryEntry {
   id: string;
   createdAt: string;
   answers: AuditAnswer[];
+  /** Provisional audits are still actionable, but did not meet the normal confidence threshold. */
+  status?: 'resolved' | 'provisional' | 'held';
   primaryStateId: string;
   primaryStateLabel?: string;
   secondaryStateId?: string;

@@ -30,7 +30,13 @@ function stateLabelMap(model: AuditModel) {
   return new Map(model.states.map((state) => [state.id, state.label]));
 }
 
+function isResolved(entry: AuditHistoryEntry) {
+  // statusがない過去データは、従来どおり確定済みとして扱う。
+  return entry.status !== 'held';
+}
+
 export function primaryLabel(entry: AuditHistoryEntry, model: AuditModel) {
+  if (!isResolved(entry)) return '判定保留';
   return entry.primaryStateLabel || stateLabelMap(model).get(entry.primaryStateId) || entry.primaryStateId || '不明';
 }
 
@@ -90,7 +96,7 @@ export function buildPeriodSeries(history: AuditHistoryEntry[], model: AuditMode
     const key = bucketKey(start, granularity);
     const entries = history.filter((entry) => bucketKey(new Date(entry.createdAt), granularity) === key);
     const counts = new Map<string, number>();
-    for (const entry of entries) {
+    for (const entry of entries.filter(isResolved)) {
       const label = primaryLabel(entry, model);
       counts.set(label, (counts.get(label) ?? 0) + 1);
     }
@@ -110,13 +116,14 @@ export function buildPeriodSeries(history: AuditHistoryEntry[], model: AuditMode
 
 export function primaryFrequency(history: AuditHistoryEntry[], model: AuditModel): FrequencyItem[] {
   const counts = new Map<string, { id: string; count: number }>();
-  for (const entry of history) {
+  const resolved = history.filter(isResolved);
+  for (const entry of resolved) {
     const label = primaryLabel(entry, model);
     const current = counts.get(label) ?? { id: entry.primaryStateId, count: 0 };
     current.count += 1;
     counts.set(label, current);
   }
-  const total = history.length || 1;
+  const total = resolved.length || 1;
   return [...counts.entries()]
     .map(([label, value]) => ({ id: value.id, label, count: value.count, share: value.count / total }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'ja'));
@@ -138,7 +145,7 @@ export function secondaryFrequency(history: AuditHistoryEntry[], model: AuditMod
 }
 
 export function transitionFrequency(history: AuditHistoryEntry[], model: AuditModel): TransitionItem[] {
-  const ordered = [...history].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const ordered = history.filter(isResolved).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   const counts = new Map<string, { from: string; to: string; count: number }>();
   for (let i = 1; i < ordered.length; i += 1) {
     const from = primaryLabel(ordered[i - 1], model);
@@ -195,11 +202,12 @@ export function historySummary(history: AuditHistoryEntry[], model: AuditModel, 
   const averageProbability = history.length ? history.reduce((sum, item) => sum + item.probability, 0) / history.length : 0;
   const highConfidenceRate = history.length ? history.filter((item) => item.confidence === 'high').length / history.length : 0;
   const ordered = [...history].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const resolved = ordered.filter(isResolved);
   let sameAsPrevious = 0;
-  for (let i = 1; i < ordered.length; i += 1) {
-    if (primaryLabel(ordered[i], model) === primaryLabel(ordered[i - 1], model)) sameAsPrevious += 1;
+  for (let i = 1; i < resolved.length; i += 1) {
+    if (primaryLabel(resolved[i], model) === primaryLabel(resolved[i - 1], model)) sameAsPrevious += 1;
   }
-  const repeatRate = ordered.length > 1 ? sameAsPrevious / (ordered.length - 1) : 0;
+  const repeatRate = resolved.length > 1 ? sameAsPrevious / (resolved.length - 1) : 0;
   return {
     total: history.length,
     last7,

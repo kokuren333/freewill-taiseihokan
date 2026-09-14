@@ -255,6 +255,8 @@ function validateAuditIntegrity(data: TaiseihoukanData) {
   const stateIds = data.auditModel.states.map((s) => s.id);
   const uniqueStates = new Set(stateIds);
   if (uniqueStates.size !== stateIds.length) throw new Error('audit-model.json: state id が重複しています');
+  const stateLabels = data.auditModel.states.map((s) => s.label.trim().normalize('NFKC'));
+  if (new Set(stateLabels).size !== stateLabels.length) throw new Error('audit-model.json: state label が重複しています');
   const qIds = data.auditModel.questions.map((q) => q.id);
   if (new Set(qIds).size !== qIds.length) throw new Error('audit-model.json: question id が重複しています');
   for (const q of data.auditModel.questions) {
