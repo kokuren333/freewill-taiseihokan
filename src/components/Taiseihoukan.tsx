@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import type { AuditAnswer, AuditHistoryEntry, Objection, TaiseihoukanData } from '../types';
+import type { AuditAnswer, AuditHistoryEntry, ObjectionDraft, TaiseihoukanData } from '../types';
 import type { Distribution } from '../lib/audit';
-import { chooseNextQuestion, confidenceFor, influentialAnswers, initialDistribution, rankedStates, shouldStop, updateDistribution } from '../lib/audit';
+import { AUDIT_MAX_QUESTIONS, AUDIT_MIN_QUESTIONS, AUDIT_TARGET_QUESTIONS, chooseNextQuestion, confidenceFor, distributionAfterAnswers, influentialAnswers, initialDistribution, rankedStates, secondaryCandidate, shouldStop, updateDistribution } from '../lib/audit';
 import { Button, Notice, Panel, ProgressBar } from './Common';
+import { objectionTargetCount, objectionTargetLabels } from '../data/objection';
 
 export function PolicyGraph({ data }: { data: TaiseihoukanData }) {
   const p = data.policy;
@@ -50,15 +51,17 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
   const askedIds = useMemo(() => new Set(answers.map((a) => a.questionId)), [answers]);
   const next = chooseNextQuestion(model, dist, askedIds);
   const ranked = rankedStates(dist);
+  const informativeCount = answers.filter((a) => a.value !== null).length;
 
   const finalize = (finalDist = dist, finalAnswers = answers) => {
     const rankedFinal = rankedStates(finalDist);
     const [primaryId, probability] = rankedFinal[0] ?? ['', 0];
-    const [secondaryId, secondaryProbability] = rankedFinal[1] ?? ['', 0];
+    const secondary = secondaryCandidate(finalDist);
+    const finalInformativeCount = finalAnswers.filter((a) => a.value !== null).length;
     const entry: AuditHistoryEntry = {
       id: crypto.randomUUID(), createdAt: new Date().toISOString(), answers: finalAnswers,
-      primaryStateId: primaryId, probability, confidence: confidenceFor(finalDist), reasons: influentialAnswers(model, finalAnswers, finalDist),
-      ...(secondaryProbability >= 0.2 && probability - secondaryProbability < 0.2 ? { secondaryStateId: secondaryId, secondaryProbability } : {}),
+      primaryStateId: primaryId, probability, confidence: confidenceFor(finalDist, finalInformativeCount), reasons: influentialAnswers(model, finalAnswers, finalDist),
+      ...(secondary ? { secondaryStateId: secondary.secondaryId, secondaryProbability: secondary.secondaryProbability } : {}),
     };
     setFinished(true);
     onComplete(entry);
@@ -71,61 +74,107 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
     const newAsked = new Set(newAnswers.map((a) => a.questionId));
     setAnswers(newAnswers);
     setDist(newDist);
-    const stop = shouldStop(model, newDist, newAsked, newAnswers.length);
+    const stop = shouldStop(model, newDist, newAsked, newAnswers);
     if (stop.stop) finalize(newDist, newAnswers);
+  };
+
+  const undoLast = () => {
+    if (!answers.length) return;
+    const newAnswers = answers.slice(0, -1);
+    setAnswers(newAnswers);
+    setDist(distributionAfterAnswers(model, newAnswers));
+    setFinished(false);
   };
 
   const reset = () => { setDist(initialDistribution(model)); setAnswers([]); setFinished(false); };
   const latestPrimary = model.states.find((s) => s.id === ranked[0]?.[0]);
-  const latestSecondary = model.states.find((s) => s.id === ranked[1]?.[0]);
+  const secondaryInfo = secondaryCandidate(dist);
+  const latestSecondary = secondaryInfo ? model.states.find((s) => s.id === secondaryInfo.secondaryId) : null;
+  const confidence = confidenceFor(dist, informativeCount);
 
   if (finished) {
     const primary = latestPrimary;
-    const secondary = ranked[1]?.[1] >= 0.2 && (ranked[0]?.[1] ?? 0) - (ranked[1]?.[1] ?? 0) < 0.2 ? latestSecondary : null;
+    const topThree = ranked.slice(0, 3).map(([id, probability]) => ({ state: model.states.find((s) => s.id === id), probability })).filter((x) => x.state);
     return <div className="stack-lg">
-      <Panel><p className="eyebrow">判定</p><h2>{primary?.label ?? '判定不能'}</h2><p className="audit-prob">{Math.round((ranked[0]?.[1] ?? 0) * 100)}%</p>{secondary && <p>副次状態: {secondary.label} {Math.round((ranked[1]?.[1] ?? 0) * 100)}%</p>}<p>信頼度: {confidenceFor(dist) === 'high' ? '高' : confidenceFor(dist) === 'medium' ? '中' : '低'}</p></Panel>
+      <Notice tone="info"><strong>決定規則:</strong> 基本方針の制約・維持条件を最優先し、その範囲内で主状態の推奨処理を採用します。副状態は解釈補助であり、主状態の行動を追加・上書きしません。</Notice>
+      <Panel>
+        <p className="eyebrow">主状態 / ACTION ROUTE</p>
+        <h2>{primary?.label ?? '判定不能'}</h2>
+        <p className="audit-prob">{Math.round((ranked[0]?.[1] ?? 0) * 100)}%</p>
+        <p>信頼度: {confidence === 'high' ? '高' : confidence === 'medium' ? '中' : '低'}</p>
+        <p className="muted">{answers.length}問を探索（有効回答 {informativeCount}）。推奨処理はこの主状態のみから決定します。</p>
+      </Panel>
       <div className="audit-result-grid">
-        <Panel><h3>根拠</h3><ul>{influentialAnswers(model, answers, dist).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
         <Panel><h3>推奨処理</h3><ul>{primary?.recommendedActions.slice(0, 3).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
         <Panel><h3>回避処理</h3><ul>{primary?.avoidActions.slice(0, 3).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
+        <Panel><h3>副状態候補</h3>{latestSecondary && secondaryInfo ? <><strong>{latestSecondary.label} {Math.round(secondaryInfo.secondaryProbability * 100)}%</strong>{latestSecondary.description && <p>{latestSecondary.description}</p>}<p className="muted">副状態の recommendedActions / avoidActions は自動適用しません。主状態との矛盾を避けるための仕様です。</p></> : <p className="muted">行動決定に影響させるほど明瞭な副状態候補はありません。</p>}</Panel>
+        <Panel><h3>候補分布</h3><ol className="audit-ranking">{topThree.map((x, i) => <li key={x.state!.id}><span>{i === 0 ? '主' : i === 1 ? '次' : '候補'}: {x.state!.label}</span><strong>{Math.round(x.probability * 100)}%</strong></li>)}</ol></Panel>
+        <Panel><h3>根拠</h3><ul>{influentialAnswers(model, answers, dist).map((x, i) => <li key={i}>{x}</li>)}</ul></Panel>
         {primary?.reauditConditions?.length ? <Panel><h3>再監査条件</h3><ul>{primary.reauditConditions.map((x, i) => <li key={i}>{x}</li>)}</ul></Panel> : null}
       </div>
-      <Button onClick={reset}>再監査</Button>
+      <div className="action-row"><Button onClick={reset}>再監査</Button></div>
     </div>;
   }
 
   return <div className="audit-shell">
     <Panel>
-      <div className="section-heading"><div><h2>状態監査</h2><p>回答に応じ、候補分布を更新して次の質問を動的に選択します。</p></div><span className="status-chip">最大12問</span></div>
-      <ProgressBar value={answers.length} max={12} label={`${answers.length} / 12`} />
+      <div className="section-heading"><div><h2>状態監査</h2><p>現在の状態パターンを探索し、事前に定義された行動様式へルーティングします。1〜3回答だけで確定せず、複数方向から確認します。</p></div><span className="status-chip">通常 {AUDIT_TARGET_QUESTIONS}〜{AUDIT_MAX_QUESTIONS}問</span></div>
+      <ProgressBar value={answers.length} max={AUDIT_MAX_QUESTIONS} label={`${answers.length} / ${AUDIT_MAX_QUESTIONS}`} />
+      <p className="muted">最低探索数 {AUDIT_MIN_QUESTIONS}問。AI推論は実行せず、読み込まれた状態モデルと回答だけで次質問を選択します。</p>
     </Panel>
     {next ? <Panel className="audit-question-panel">
       <p className="eyebrow">QUESTION {answers.length + 1}</p>
       <h3>{next.question.text}</h3>
-      <p className="muted">次質問の情報利得: {next.informationGain.toFixed(3)} bits</p>
+      <p className="muted">質問選択スコア: {next.selectionScore.toFixed(3)} / 情報利得: {next.informationGain.toFixed(3)} bits</p>
       <div className="audit-answer-grid">{answerOptions.map((o) => <Button key={String(o.value)} variant={o.value === null ? 'quiet' : 'default'} onClick={() => answer(o.value)}>{o.label}</Button>)}</div>
+      {answers.length > 0 && <div className="audit-question-actions"><Button variant="quiet" onClick={undoLast}>1問戻る</Button><span className="muted">誤入力した場合、直前の回答を取り消して分布を再計算できます。</span></div>}
     </Panel> : <Notice tone="warn">未質問の質問候補がありません。現在分布で判定します。<div><Button onClick={() => finalize()}>判定を表示</Button></div></Notice>}
   </div>;
 }
 
-export function ObjectionForm({ onSubmit, existing }: { onSubmit: (o: Objection) => void; existing: Objection[] }) {
-  const empty = { target: '目的', reason: '', newFacts: '', premiseDifference: '', attemptedResponses: '', continuationProblem: '' };
-  const [form, setForm] = useState(empty);
-  const fields: Array<[keyof typeof empty, string]> = [
-    ['reason', '変更理由'], ['newFacts', '新たに発生した事実'], ['premiseDifference', '当初前提との相違'], ['attemptedResponses', '既に試した対応'], ['continuationProblem', '現行方針を継続した場合の問題'],
-  ];
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSubmit({ id: crypto.randomUUID(), createdAt: new Date().toISOString(), ...form });
-    setForm(empty);
+export function ObjectionForm({ draft, onChange, onExport, onReset }: { draft: ObjectionDraft; onChange: (draft: ObjectionDraft) => void; onExport: () => void; onReset: () => void }) {
+  const updateTarget = (key: keyof ObjectionDraft['targetChanges'], value: string) => {
+    onChange({ ...draft, updatedAt: new Date().toISOString(), targetChanges: { ...draft.targetChanges, [key]: value } });
   };
+  const updateField = (key: 'newFacts' | 'premiseDifference' | 'attemptedResponses' | 'continuationProblem' | 'additionalContext', value: string) => {
+    onChange({ ...draft, updatedAt: new Date().toISOString(), [key]: value });
+  };
+  const activeTargets = objectionTargetCount(draft);
+
   return <div className="stack-lg">
-    <Notice tone="info">この画面では基本方針を直接変更しません。異議を記録し、大政奉還ZIPを書き出して外部で再審査してください。</Notice>
-    <Panel><h2>異議申し立て</h2><form onSubmit={submit} className="form-stack">
-      <div className="field"><label>変更対象</label><select value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value })}>{['目的','長期目標','中期目標','優先順位','制約','維持条件','その他'].map((x) => <option key={x}>{x}</option>)}</select></div>
-      {fields.map(([key, label]) => <div className="field" key={key}><label>{label}</label><textarea rows={4} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} /></div>)}
-      <div><Button variant="primary" type="submit">異議を記録</Button></div>
-    </form></Panel>
-    {existing.length > 0 && <Panel><h3>記録済み</h3><div className="objection-list">{existing.slice().reverse().map((o) => <article key={o.id}><strong>{o.target}</strong><time>{new Date(o.createdAt).toLocaleString('ja-JP')}</time><p>{o.reason || '変更理由の記載なし'}</p></article>)}</div></Panel>}
+    <Notice tone="info"><strong>独立データ:</strong> ここで記入した異議は現在の大政奉還データへ追記されません。別の異議申し立て状態として自動保存され、<code>objection.zip</code> にだけ含まれます。ChatGPTへ渡した後は、新しい <code>taiseihoukan.zip</code> を読み込んで現在方針を置き換えます。</Notice>
+
+    <Panel>
+      <div className="section-heading">
+        <div><h2>異議申し立て</h2><p>変更したい対象を複数同時に記入できます。該当しない項目は空欄のままで構いません。</p></div>
+        <span className="status-chip">記入対象 {activeTargets} / {objectionTargetLabels.length}</span>
+      </div>
+      <div className="objection-target-grid">
+        {objectionTargetLabels.map((item) => <div className="field objection-target" key={item.key}>
+          <label htmlFor={`objection-${item.key}`}>{item.label}</label>
+          <p className="field-help">{item.description}</p>
+          <textarea id={`objection-${item.key}`} rows={4} value={draft.targetChanges[item.key]} onChange={(e) => updateTarget(item.key, e.target.value)} placeholder={`${item.label}について変更したい内容・異議がある場合のみ記入`} />
+        </div>)}
+      </div>
+    </Panel>
+
+    <Panel>
+      <h3>再審査のための共通情報</h3>
+      <p className="muted">複数の変更対象に共通する根拠をまとめて記入します。これらも任意です。</p>
+      <div className="form-stack">
+        <div className="field"><label htmlFor="objection-new-facts">新たに発生した事実</label><textarea id="objection-new-facts" rows={4} value={draft.newFacts} onChange={(e) => updateField('newFacts', e.target.value)} /></div>
+        <div className="field"><label htmlFor="objection-premise">当初前提との相違</label><textarea id="objection-premise" rows={4} value={draft.premiseDifference} onChange={(e) => updateField('premiseDifference', e.target.value)} /></div>
+        <div className="field"><label htmlFor="objection-attempted">既に試した対応</label><textarea id="objection-attempted" rows={4} value={draft.attemptedResponses} onChange={(e) => updateField('attemptedResponses', e.target.value)} /></div>
+        <div className="field"><label htmlFor="objection-continuation">現行方針を継続した場合の問題</label><textarea id="objection-continuation" rows={4} value={draft.continuationProblem} onChange={(e) => updateField('continuationProblem', e.target.value)} /></div>
+        <div className="field"><label htmlFor="objection-context">その他の補足</label><textarea id="objection-context" rows={4} value={draft.additionalContext} onChange={(e) => updateField('additionalContext', e.target.value)} /></div>
+      </div>
+    </Panel>
+
+    <Panel>
+      <h3>提出</h3>
+      <p>異議申し立てZIPには、現在有効な大政奉還のスナップショット、現在の異議、状態監査履歴、再審査指示を同梱します。現在の大政奉還本体は変更しません。</p>
+      <div className="action-row"><Button variant="primary" onClick={onExport}>異議申し立てZIPを書き出す</Button><Button variant="danger" onClick={onReset}>記入内容をリセット</Button></div>
+      <p className="muted">最終更新: {new Date(draft.updatedAt).toLocaleString('ja-JP')}</p>
+    </Panel>
   </div>;
 }

@@ -219,3 +219,21 @@ textarea { resize: vertical; line-height: 1.65; overflow-wrap: anywhere; }
   .mobile-route-nav button { flex: none; border: 1px solid var(--line); background: white; min-height: 36px; padding: .45rem .7rem; border-radius: 3px; font-size: .76rem; }
   .mobile-route-nav.compact { justify-content: flex-end; }
 }
+.audit-question-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.audit-ranking { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.audit-ranking li { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding: 7px 0; }
+.audit-ranking li:last-child { border-bottom: 0; }
+.audit-ranking strong { font-variant-numeric: tabular-nums; }
+.sidebar button.danger-link { color: var(--danger); }
+.sidebar button.danger-link:hover { background: #f6eaea; }
+
+.field-help { margin: -2px 0 2px; color: var(--muted); font-size: .8rem; line-height: 1.55; }
+.objection-target-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; min-width: 0; }
+.objection-target { border: 1px solid var(--line); background: var(--surface-2); padding: 14px; align-content: start; }
+.objection-target + .objection-target { margin-top: 0; padding-top: 14px; border-top: 1px solid var(--line); }
+.objection-target textarea { background: var(--surface); }
+code { overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .objection-target-grid { grid-template-columns: 1fr; }
+}

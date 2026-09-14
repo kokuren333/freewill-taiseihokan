@@ -36,7 +36,7 @@ const stringArray = { type: 'array', items: { type: 'string' } } as const;
 export const taiseihoukanBundleSchema = {
   $id: 'https://kokuren.chatgpt.site/schemas/taiseihoukan.schema.json',
   type: 'object', additionalProperties: true,
-  required: ['policy', 'personalModel', 'auditModel', 'objections'],
+  required: ['policy', 'personalModel', 'auditModel'],
   properties: {
     policy: {
       type: 'object', additionalProperties: true,
@@ -82,16 +82,40 @@ export const taiseihoukanBundleSchema = {
           }
         }
       }
-    },
-    objections: {
-      type: 'array', items: {
-        type: 'object', additionalProperties: true,
-        required: ['id', 'createdAt', 'target', 'reason', 'newFacts', 'premiseDifference', 'attemptedResponses', 'continuationProblem'],
-        properties: {
-          id: { type: 'string' }, createdAt: { type: 'string' }, target: { type: 'string' }, reason: { type: 'string' },
-          newFacts: { type: 'string' }, premiseDifference: { type: 'string' }, attemptedResponses: { type: 'string' }, continuationProblem: { type: 'string' }
-        }
-      }
     }
+  }
+} as const;
+
+export const objectionSchema = {
+  $id: 'https://kokuren.chatgpt.site/schemas/objection.schema.json',
+  type: 'object',
+  additionalProperties: true,
+  required: ['schemaVersion', 'createdAt', 'updatedAt', 'targetChanges', 'newFacts', 'premiseDifference', 'attemptedResponses', 'continuationProblem', 'additionalContext'],
+  properties: {
+    schemaVersion: { const: '1.0.0' },
+    createdAt: { type: 'string' },
+    updatedAt: { type: 'string' },
+    targetChanges: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['purpose', 'longTermGoal', 'midTermGoals', 'priorities', 'constraints', 'maintenanceConditions', 'changeConditions', 'endConditions', 'auditModel', 'other'],
+      properties: {
+        purpose: { type: 'string' },
+        longTermGoal: { type: 'string' },
+        midTermGoals: { type: 'string' },
+        priorities: { type: 'string' },
+        constraints: { type: 'string' },
+        maintenanceConditions: { type: 'string' },
+        changeConditions: { type: 'string' },
+        endConditions: { type: 'string' },
+        auditModel: { type: 'string' },
+        other: { type: 'string' }
+      }
+    },
+    newFacts: { type: 'string' },
+    premiseDifference: { type: 'string' },
+    attemptedResponses: { type: 'string' },
+    continuationProblem: { type: 'string' },
+    additionalContext: { type: 'string' }
   }
 } as const;

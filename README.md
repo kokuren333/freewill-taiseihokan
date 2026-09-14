@@ -8,17 +8,24 @@
 - IndexedDB自動保存 / 再開
 - 簡易入力（心理質問60問）
 - 詳細入力（14セクション + 心理質問150問）
+- 自由意志の記入内容リセット
+- 心理5件法の選択解除（選択済み項目を再選択）
 - 入力補助用のChatGPT貼り付けプロンプト
 - 自由意志ZIP import / export
-- ChatGPT Memoryに入力補完を依頼するZIP export
+- **手入力とは独立した「ChatGPT Memoryから大政奉還」依頼ZIP export**
 - 大政奉還ZIP import / export
 - JSON Schema検証（Ajv）
 - audit-modelのstate/question参照整合性検証
 - 基本方針表示 / レスポンシブ方針グラフ
-- 状態監査（事前確率、ベイズ更新、期待情報利得、動的質問選択、停止条件）
-- 複合状態表示
+- 状態監査（事前確率、tempered Bayesian update、期待情報利得、質問類似度を考慮した動的選択、最低探索数、停止条件）
+- 主状態 + 副状態候補 + 上位候補分布表示
+- 行動決定は主状態のみ、副状態は解釈補助
+- 状態監査の「1問戻る」
 - 状態監査履歴のローカル保存 / ZIP同梱
-- 異議申し立て記録 / 再審査ZIP
+- 異議申し立てを大政奉還本体と分離した独立下書きとして自動保存
+- 複数の変更対象を同時記入できる異議申し立てフォーム
+- 異議申し立て記入のリセット
+- `objection.zip` export → ChatGPT再審査 → 新しい `taiseihoukan.zip` import
 - PC / スマートフォンUI
 - reduced-motion / focus state / semantic HTML
 - GitHub Pages workflow
@@ -43,9 +50,15 @@ npm run preview
 
 入力データはIndexedDB `jiyuu-ishi-taiseihoukan` に保存します。外部DB、認証、LLM API、OpenAI API等は使用しません。
 
-## ZIP
+「記入内容をリセット」は自由意志側の簡易入力・詳細入力・心理回答・進捗だけを初期化します。読み込み済みの大政奉還データと状態監査履歴は削除しません。
 
-### 自由意志
+異議申し立ては `objectionDraft` として大政奉還本体から独立してIndexedDBへ自動保存します。異議申し立て側の「記入内容をリセット」はこの下書きだけを初期化し、現在有効な大政奉還には触れません。
+
+## 自由意志の2経路
+
+### A. 自分で入力する
+
+簡易入力または詳細入力から `free-will.json` を作成し、ChatGPTへ渡します。
 
 `free-will_YYYY-MM-DD.zip`
 
@@ -61,9 +74,25 @@ free-will/
     └── taiseihoukan.schema.json
 ```
 
-Memory補助版には `MEMORY_AUTOFILL_INSTRUCTIONS.md` を追加します。サイト自身がChatGPT Memoryへアクセスする機能ではなく、利用者がZIPをChatGPTへアップロードした後にMemory利用を依頼するための形式です。
+### B. ChatGPT Memoryから大政奉還する
 
-### 大政奉還
+**Aの入力内容とは混合しません。** サイト内の `free-will.json` やフォーム内容をZIPに入れず、ChatGPTが現在利用可能なMemory・会話文脈だけを情報源として人物情報を構造化し、そのまま `taiseihoukan.zip` を生成するよう依頼します。
+
+`memory-taiseihoukan-request_YYYY-MM-DD.zip`
+
+```text
+memory-taiseihoukan-request/
+├── manifest.json
+├── README_FOR_CHATGPT.md
+├── generation_prompt.md
+└── schemas/
+    ├── free-will.schema.json
+    └── taiseihoukan.schema.json
+```
+
+サイト自身がChatGPT Memoryへアクセスする機能ではありません。ZIPを利用者自身がChatGPTへアップロードします。
+
+## 大政奉還ZIP
 
 `taiseihoukan_YYYY-MM-DD.zip`
 
@@ -73,27 +102,77 @@ taiseihoukan/
 ├── policy.json
 ├── personal-model.json
 ├── audit-model.json
-├── objections.json
 ├── analysis.md
 ├── audit-history.json
-├── README_FOR_REASSESSMENT.md
 └── schemas/
     └── taiseihoukan.schema.json
 ```
 
-## 状態監査アルゴリズム
+異議申し立ては大政奉還ZIPへ蓄積しません。現在の大政奉還は「有効な基準状態」として保ち、異議は別の下書き状態に保存します。
+
+## 異議申し立てZIP
+
+異議申し立て画面では、目的・長期目標・中期目標・優先順位・制約・維持条件・変更条件・終了条件・状態監査モデル・その他を**一度に複数記入**できます。選択式で1項目ずつ登録する方式ではありません。
+
+`objection_YYYY-MM-DD.zip`
+
+```text
+objection/
+├── manifest.json
+├── objection.json
+├── README_FOR_CHATGPT.md
+├── generation_prompt.md
+├── current-taiseihoukan/
+│   ├── policy.json
+│   ├── personal-model.json
+│   ├── audit-model.json
+│   └── analysis.md
+├── audit-history.json
+└── schemas/
+    ├── objection.schema.json
+    └── taiseihoukan.schema.json
+```
+
+処理フローは以下です。
+
+```text
+現在の taiseihoukan
+        +
+独立した objectionDraft
+        ↓
+objection.zip
+        ↓
+ChatGPTで再審査
+        ↓
+新しい taiseihoukan.zip
+        ↓
+サイトへ読み込み、現在方針を置換
+```
+
+新しい大政奉還ZIPを正常に読み込むと、異議申し立て下書きは「処理済み」とみなして自動リセットします。旧形式の `taiseihoukan.zip` に `objections.json` が含まれていても読み込み互換性は維持しますが、その内容は新しい大政奉還本体へ取り込みません。
+
+## 状態監査アルゴリズム v2
+
+目的は、現在の状態パターンを判定して、あらかじめ定義された行動様式へ機械的にルーティングすることです。恒常的な人格診断には使いません。
 
 1. stateごとのpriorを正規化
-2. 未質問の各questionについて期待情報利得を計算
-3. 最大のquestionを提示
-4. 回答に対して `P(answer | state)` で事後分布を更新
-5. 次のいずれかで停止
-   - 1位 >= 0.75 かつ2位との差 >= 0.20（最低3問後）
-   - 12問
-   - 追加質問の情報利得 < 0.02（最低4問後）
-6. 1位と2位が近い場合は複合状態として表示
+2. AI生成likelihoodをそのまま「校正済み確率」とみなさず、power temperingで1回答の影響を弱める
+3. 未質問の各questionについて期待情報利得を計算
+4. 既出質問と識別パターンが近すぎる質問に軽いペナルティを与え、同じ方向の確認だけに偏らないようにする
+5. 回答ごとに事後分布を更新
+6. **最低8問を探索し、通常10〜12問で決定**
+7. 8〜9問で終了できるのは極端に明瞭な場合のみ
+8. 10問以降は主状態の優位・残り情報利得を見て停止し、最大12問で必ず終了
+9. `判断できない` は分布を更新しないが質問済みとして扱う
+10. 誤入力時は「1問戻る」で直前回答を取り消し、分布を最初から再計算
 
-`判断できない` は分布を更新せず、質問済みとして次の質問へ進みます。
+結果画面では「主状態」を行動決定に使い、「副状態候補」は解釈補助として表示します。副状態の推奨処理・回避処理は自動的には混合しません。優先順位は次の通りです。
+
+1. 基本方針の制約・維持条件
+2. 主状態の推奨処理・回避処理
+3. 副状態は解釈補助のみ
+
+これにより、主状態と副状態の行動指示が矛盾して利用者が再び判断を迫られることを避けます。
 
 ## サンプル
 
@@ -101,4 +180,4 @@ taiseihoukan/
 
 ## 仕様
 
-`docs/SPEC.md` に今回の実装指示書を同梱しています。
+`docs/SPEC.md` は初版仕様を保存しています。実運用後の変更点は `docs/IMPLEMENTATION_NOTES.md` の最新版（v1.2）を優先してください。

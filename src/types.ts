@@ -67,15 +67,28 @@ export interface AuditModel {
   questions: AuditQuestion[];
 }
 
-export interface Objection {
-  id: string;
+export type ObjectionTargetKey =
+  | 'purpose'
+  | 'longTermGoal'
+  | 'midTermGoals'
+  | 'priorities'
+  | 'constraints'
+  | 'maintenanceConditions'
+  | 'changeConditions'
+  | 'endConditions'
+  | 'auditModel'
+  | 'other';
+
+export interface ObjectionDraft {
+  schemaVersion: '1.0.0';
   createdAt: string;
-  target: string;
-  reason: string;
+  updatedAt: string;
+  targetChanges: Record<ObjectionTargetKey, string>;
   newFacts: string;
   premiseDifference: string;
   attemptedResponses: string;
   continuationProblem: string;
+  additionalContext: string;
 }
 
 export interface TaiseihoukanData {
@@ -83,7 +96,6 @@ export interface TaiseihoukanData {
   policy: PolicyData;
   personalModel: PersonalModel;
   auditModel: AuditModel;
-  objections: Objection[];
   analysis: string;
 }
 
@@ -109,4 +121,5 @@ export interface AppState {
   freeWill: FreeWillData;
   taiseihoukan: TaiseihoukanData | null;
   auditHistory: AuditHistoryEntry[];
+  objectionDraft: ObjectionDraft;
 }
