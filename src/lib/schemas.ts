@@ -119,3 +119,38 @@ export const objectionSchema = {
     additionalContext: { type: 'string' }
   }
 } as const;
+
+export const auditHistorySchema = {
+  $id: 'https://kokuren.chatgpt.site/schemas/audit-history.schema.json',
+  type: 'array',
+  items: {
+    type: 'object',
+    additionalProperties: true,
+    required: ['id', 'createdAt', 'answers', 'primaryStateId', 'probability', 'confidence', 'reasons'],
+    properties: {
+      id: { type: 'string', minLength: 1 },
+      createdAt: { type: 'string' },
+      answers: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: true,
+          required: ['questionId', 'value'],
+          properties: {
+            questionId: { type: 'string', minLength: 1 },
+            value: { anyOf: [{ type: 'number', minimum: 0, maximum: 4 }, { type: 'null' }] }
+          }
+        }
+      },
+      primaryStateId: { type: 'string', minLength: 1 },
+      primaryStateLabel: { type: 'string' },
+      secondaryStateId: { type: 'string' },
+      secondaryStateLabel: { type: 'string' },
+      probability: { type: 'number', minimum: 0, maximum: 1 },
+      secondaryProbability: { type: 'number', minimum: 0, maximum: 1 },
+      confidence: { enum: ['high', 'medium', 'low'] },
+      reasons: stringArray,
+      taiseihoukanRevision: { type: 'string' }
+    }
+  }
+} as const;

@@ -2,9 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Button, Modal, Notice, Panel } from './components/Common';
 import { DetailedForm, FreeWillReview, QuickForm } from './components/FreeWillForms';
 import { AuditRunner, ObjectionForm, PolicyView } from './components/Taiseihoukan';
+import { AuditDashboard } from './components/AuditDashboard';
 import { newObjectionDraft, normalizeObjectionDraft } from './data/objection';
 import { loadAppState, saveAppState } from './lib/db';
-import { exportFreeWillZip, exportMemoryTaiseihoukanRequestZip, exportObjectionZip, exportTaiseihoukanZip, importFreeWillZip, importTaiseihoukanZip } from './lib/zip';
+import { exportBackupZip, exportFreeWillZip, exportMemoryTaiseihoukanRequestZip, exportObjectionZip, importBackupZip, importFreeWillZip, importTaiseihoukanZip } from './lib/zip';
 import type { AppState, AuditHistoryEntry, FreeWillData, ObjectionDraft, ObjectionTargetKey, TaiseihoukanData } from './types';
 
 function newFreeWill(): FreeWillData {
@@ -18,7 +19,7 @@ function newFreeWill(): FreeWillData {
   };
 }
 
-const defaultState: AppState = { initialized: false, freeWill: newFreeWill(), taiseihoukan: null, auditHistory: [], objectionDraft: newObjectionDraft() };
+const defaultState: AppState = { initialized: false, freeWill: newFreeWill(), taiseihoukan: null, taiseihoukanArchive: null, auditHistory: [], objectionDraft: newObjectionDraft() };
 
 const legacyTargetMap: Record<string, ObjectionTargetKey> = {
   '目的': 'purpose', '長期目標': 'longTermGoal', '中期目標': 'midTermGoals', '優先順位': 'priorities', '制約': 'constraints', '維持条件': 'maintenanceConditions', '変更条件': 'changeConditions', '終了条件': 'endConditions', '状態監査モデル': 'auditModel', 'その他': 'other',
@@ -27,6 +28,19 @@ const legacyTargetMap: Record<string, ObjectionTargetKey> = {
 function stripLegacyObjections(value: TaiseihoukanData | (TaiseihoukanData & { objections?: unknown[] }) | null): TaiseihoukanData | null {
   if (!value) return null;
   return { manifest: value.manifest, policy: value.policy, personalModel: value.personalModel, auditModel: value.auditModel, analysis: value.analysis };
+}
+
+
+function snapshotHistoryLabels(history: AuditHistoryEntry[], taiseihoukan: TaiseihoukanData | null): AuditHistoryEntry[] {
+  if (!taiseihoukan) return history;
+  const labels = new Map(taiseihoukan.auditModel.states.map((state) => [state.id, state.label]));
+  const revision = String(taiseihoukan.manifest.createdAt ?? taiseihoukan.manifest.schemaVersion ?? 'unknown');
+  return history.map((entry) => ({
+    ...entry,
+    primaryStateLabel: entry.primaryStateLabel || labels.get(entry.primaryStateId),
+    secondaryStateLabel: entry.secondaryStateLabel || (entry.secondaryStateId ? labels.get(entry.secondaryStateId) : undefined),
+    taiseihoukanRevision: entry.taiseihoukanRevision || revision,
+  }));
 }
 
 function migrateStoredState(stored: AppState): AppState {
@@ -50,19 +64,22 @@ function migrateStoredState(stored: AppState): AppState {
     }
     draft = { ...draft, targetChanges, additionalContext: extras.join('\n'), updatedAt: new Date().toISOString() };
   }
+  const taiseihoukan = stripLegacyObjections(raw.taiseihoukan ?? null);
+  const auditHistory = snapshotHistoryLabels(Array.isArray(raw.auditHistory) ? raw.auditHistory : [], taiseihoukan);
   return {
     initialized: Boolean(raw.initialized),
     freeWill: raw.freeWill ?? newFreeWill(),
-    taiseihoukan: stripLegacyObjections(raw.taiseihoukan ?? null),
-    auditHistory: Array.isArray(raw.auditHistory) ? raw.auditHistory : [],
+    taiseihoukan,
+    taiseihoukanArchive: raw.taiseihoukanArchive ?? null,
+    auditHistory,
     objectionDraft: draft,
   };
 }
 
 type Area = 'freewill' | 'taisei';
 type FreeRoute = 'home' | 'quick' | 'detailed' | 'review';
-type TaiseiRoute = 'home' | 'policy' | 'audit' | 'objection';
-type ExportKind = 'free' | 'memory' | 'taisei' | 'objection';
+type TaiseiRoute = 'home' | 'policy' | 'audit' | 'history' | 'objection';
+type ExportKind = 'free' | 'memory' | 'backup' | 'objection';
 
 export default function App() {
   const [state, setState] = useState<AppState>(defaultState);
@@ -77,6 +94,7 @@ export default function App() {
   const [message, setMessage] = useState<{ tone: 'info' | 'warn' | 'error'; text: string } | null>(null);
   const freeInputRef = useRef<HTMLInputElement>(null);
   const taiseiInputRef = useRef<HTMLInputElement>(null);
+  const backupInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadAppState().then((stored) => {
@@ -113,21 +131,37 @@ export default function App() {
 
   const onTaiseiImport = async (file: File) => {
     try {
-      const { data, warnings } = await importTaiseihoukanZip(file);
-      const yes = state.taiseihoukan ? window.confirm('既存の大政奉還データを置き換えます。現在の異議申し立て下書きも解消済みとしてリセットします。続行しますか？') : true;
+      const { data, warnings, archive } = await importTaiseihoukanZip(file);
+      const yes = state.taiseihoukan
+        ? window.confirm('現在の大政奉還を置き換えます。既存の状態監査履歴は履歴データとして保持し、異議申し立て下書きはリセットします。続行しますか？')
+        : true;
       if (!yes) return;
-      setState((s) => ({ ...s, initialized: true, taiseihoukan: data, auditHistory: [], objectionDraft: newObjectionDraft() }));
+      setState((s) => ({ ...s, initialized: true, taiseihoukan: data, taiseihoukanArchive: archive, auditHistory: snapshotHistoryLabels(s.auditHistory, s.taiseihoukan), objectionDraft: newObjectionDraft() }));
       setArea('taisei'); setTaiseiRoute('policy');
-      const base = '大政奉還ZIPを読み込みました。異議申し立て下書きはリセットしました。';
+      const base = state.auditHistory.length
+        ? `大政奉還ZIPを読み込みました。監査履歴 ${state.auditHistory.length} 件は保持し、異議申し立て下書きをリセットしました。`
+        : '大政奉還ZIPを読み込みました。異議申し立て下書きをリセットしました。';
       setMessage({ tone: warnings.length ? 'warn' : 'info', text: warnings.length ? `${base} 警告: ${warnings.join(' / ')}` : base });
     } catch (e) { setMessage({ tone: 'error', text: e instanceof Error ? e.message : 'ZIPの読み込みに失敗しました。' }); }
+  };
+
+  const onBackupImport = async (file: File) => {
+    try {
+      const { data, auditHistory, archive, warnings } = await importBackupZip(file);
+      const yes = window.confirm(`バックアップから現在の大政奉還と状態監査履歴 ${auditHistory.length} 件を復元します。現在の大政奉還・監査履歴は置き換えられ、異議申し立て下書きはリセットされます。続行しますか？`);
+      if (!yes) return;
+      setState((s) => ({ ...s, initialized: true, taiseihoukan: data, taiseihoukanArchive: archive, auditHistory: snapshotHistoryLabels(auditHistory, data), objectionDraft: newObjectionDraft() }));
+      setArea('taisei'); setTaiseiRoute('history');
+      const base = `バックアップを読み込みました。大政奉還と監査履歴 ${auditHistory.length} 件を復元しました。`;
+      setMessage({ tone: warnings.length ? 'warn' : 'info', text: warnings.length ? `${base} 警告: ${warnings.join(' / ')}` : base });
+    } catch (e) { setMessage({ tone: 'error', text: e instanceof Error ? e.message : 'バックアップZIPの読み込みに失敗しました。' }); }
   };
 
   const doExport = async () => {
     try {
       if (exportKind === 'free') await exportFreeWillZip(state.freeWill);
       if (exportKind === 'memory') await exportMemoryTaiseihoukanRequestZip();
-      if (exportKind === 'taisei') await exportTaiseihoukanZip(state);
+      if (exportKind === 'backup') await exportBackupZip(state);
       if (exportKind === 'objection') await exportObjectionZip(state);
       setExportKind(null);
     } catch (e) { setMessage({ tone: 'error', text: e instanceof Error ? e.message : '書き出しに失敗しました。' }); setExportKind(null); }
@@ -170,11 +204,13 @@ export default function App() {
           <Button onClick={exportMemoryFromOnboarding}>ChatGPT Memoryから大政奉還する</Button>
           <Button onClick={() => freeInputRef.current?.click()}>自由意志を読み込む</Button>
           <Button onClick={() => taiseiInputRef.current?.click()}>大政奉還を読み込む</Button>
+          <Button onClick={() => backupInputRef.current?.click()}>バックアップを読み込む</Button>
         </div>
         <p className="privacy-note">このサイトは入力内容を外部サーバへ自動送信しません。ChatGPTへ送信する場合は、書き出したZIPを利用者自身がアップロードしてください。</p>
       </main>
       <input ref={freeInputRef} hidden type="file" accept=".zip,application/zip" onChange={(e) => e.target.files?.[0] && onFreeImport(e.target.files[0])} />
       <input ref={taiseiInputRef} hidden type="file" accept=".zip,application/zip" onChange={(e) => e.target.files?.[0] && onTaiseiImport(e.target.files[0])} />
+      <input ref={backupInputRef} hidden type="file" accept=".zip,application/zip" onChange={(e) => e.target.files?.[0] && onBackupImport(e.target.files[0])} />
     </div>;
   }
 
@@ -204,10 +240,12 @@ export default function App() {
           <p className="sidebar-label">大政奉還</p>
           <button className={taiseiRoute === 'policy' ? 'active' : ''} onClick={() => setTaiseiRoute('policy')} disabled={!state.taiseihoukan}>基本方針</button>
           <button className={taiseiRoute === 'audit' ? 'active' : ''} onClick={() => setTaiseiRoute('audit')} disabled={!state.taiseihoukan}>状態監査</button>
+          <button className={taiseiRoute === 'history' ? 'active' : ''} onClick={() => setTaiseiRoute('history')} disabled={!state.taiseihoukan}>監査履歴</button>
           <button className={taiseiRoute === 'objection' ? 'active' : ''} onClick={() => setTaiseiRoute('objection')} disabled={!state.taiseihoukan}>異議申し立て</button>
           <hr />
           <button onClick={() => taiseiInputRef.current?.click()}>大政奉還を読み込む</button>
-          <button onClick={() => setExportKind('taisei')} disabled={!state.taiseihoukan}>大政奉還を書き出す</button>
+          <button onClick={() => backupInputRef.current?.click()}>バックアップを読み込む</button>
+          <button onClick={() => setExportKind('backup')} disabled={!state.taiseihoukan}>バックアップを書き出す</button>
         </>}
       </aside>
 
@@ -215,22 +253,24 @@ export default function App() {
         {area === 'freewill' ? <nav className="mobile-route-nav" aria-label="自由意志モバイルメニュー">
           <button onClick={() => setFreeRoute('home')}>トップ</button><button onClick={() => setFreeRoute('quick')}>簡易</button><button onClick={() => setFreeRoute('detailed')}>詳細</button><button onClick={() => setFreeRoute('review')}>確認</button><button onClick={() => freeInputRef.current?.click()}>読込</button><button onClick={() => setExportKind('free')}>書出</button>
         </nav> : <nav className="mobile-route-nav compact" aria-label="大政奉還モバイル管理">
-          <button onClick={() => setTaiseiRoute('home')}>トップ</button><button onClick={() => taiseiInputRef.current?.click()}>読込</button><button disabled={!state.taiseihoukan} onClick={() => setExportKind('taisei')}>書出</button>
+          <button onClick={() => setTaiseiRoute('home')}>トップ</button><button onClick={() => taiseiInputRef.current?.click()}>大政奉還読込</button><button onClick={() => backupInputRef.current?.click()}>復元</button><button disabled={!state.taiseihoukan} onClick={() => setExportKind('backup')}>バックアップ</button>
         </nav>}
         {message && <Notice tone={message.tone}>{message.text}<button className="notice-close" aria-label="閉じる" onClick={() => setMessage(null)}>×</button></Notice>}
         {area === 'freewill' && <FreeWillArea route={freeRoute} setRoute={setFreeRoute} data={state.freeWill} onChange={updateFreeWill} onImport={() => freeInputRef.current?.click()} onExport={() => setExportKind('free')} onMemory={() => setExportKind('memory')} onReset={() => setResetFreeWillOpen(true)} />}
-        {area === 'taisei' && <TaiseiArea route={taiseiRoute} setRoute={setTaiseiRoute} state={state} onImport={() => taiseiInputRef.current?.click()} onExport={() => setExportKind('taisei')} onAuditComplete={addAuditHistory} onObjectionChange={updateObjectionDraft} onObjectionExport={() => setExportKind('objection')} onObjectionReset={() => setResetObjectionOpen(true)} />}
+        {area === 'taisei' && <TaiseiArea route={taiseiRoute} setRoute={setTaiseiRoute} state={state} onImport={() => taiseiInputRef.current?.click()} onBackupImport={() => backupInputRef.current?.click()} onBackupExport={() => setExportKind('backup')} onAuditComplete={addAuditHistory} onObjectionChange={updateObjectionDraft} onObjectionExport={() => setExportKind('objection')} onObjectionReset={() => setResetObjectionOpen(true)} />}
       </main>
     </div>
 
     {state.taiseihoukan && <nav className="mobile-bottom-nav" aria-label="大政奉還モバイルナビ">
       <button className={area === 'taisei' && taiseiRoute === 'policy' ? 'active' : ''} onClick={() => { setArea('taisei'); setTaiseiRoute('policy'); }}>基本方針</button>
       <button className={area === 'taisei' && taiseiRoute === 'audit' ? 'active' : ''} onClick={() => { setArea('taisei'); setTaiseiRoute('audit'); }}>状態監査</button>
+      <button className={area === 'taisei' && taiseiRoute === 'history' ? 'active' : ''} onClick={() => { setArea('taisei'); setTaiseiRoute('history'); }}>監査履歴</button>
       <button className={area === 'taisei' && taiseiRoute === 'objection' ? 'active' : ''} onClick={() => { setArea('taisei'); setTaiseiRoute('objection'); }}>異議申し立て</button>
     </nav>}
 
     <input ref={freeInputRef} hidden type="file" accept=".zip,application/zip" onChange={(e) => { const f = e.target.files?.[0]; e.currentTarget.value = ''; if (f) onFreeImport(f); }} />
     <input ref={taiseiInputRef} hidden type="file" accept=".zip,application/zip" onChange={(e) => { const f = e.target.files?.[0]; e.currentTarget.value = ''; if (f) onTaiseiImport(f); }} />
+    <input ref={backupInputRef} hidden type="file" accept=".zip,application/zip" onChange={(e) => { const f = e.target.files?.[0]; e.currentTarget.value = ''; if (f) onBackupImport(f); }} />
 
     {exportKind && <Modal title="書き出し確認" onClose={() => setExportKind(null)} footer={<><Button onClick={() => setExportKind(null)}>キャンセル</Button><Button variant="primary" onClick={doExport}>書き出す</Button></>}>
       {exportKind === 'memory' ? <>
@@ -239,9 +279,9 @@ export default function App() {
       </> : exportKind === 'objection' ? <>
         <p>現在の大政奉還のスナップショットと、別管理されている異議申し立て下書きを <code>objection.zip</code> にまとめます。</p>
         <Notice tone="info">この書き出しでは現在の大政奉還を変更しません。ZIPをChatGPTへ渡し、返された新しい <code>taiseihoukan.zip</code> を読み込んだ時点で置き換えます。</Notice>
-      </> : exportKind === 'taisei' ? <>
-        <p>現在の大政奉還データと状態監査履歴を書き出します。</p>
-        <Notice tone="info">異議申し立て下書きは大政奉還ZIPには含まれません。</Notice>
+      </> : exportKind === 'backup' ? <>
+        <p>現在の大政奉還と状態監査履歴を、別端末へ移行できるバックアップZIPとして書き出します。</p>
+        <Notice tone="info">大政奉還そのものは変更しません。自由意志フォームと異議申し立て下書きはバックアップに含めません。</Notice>
       </> : <p>このファイルには入力した個人情報・自分史・心理測定結果が含まれる可能性があります。</p>}
     </Modal>}
 
@@ -270,14 +310,22 @@ function FreeWillArea({ route, setRoute, data, onChange, onImport, onExport, onM
   </div>;
 }
 
-function TaiseiArea({ route, setRoute, state, onImport, onExport, onAuditComplete, onObjectionChange, onObjectionExport, onObjectionReset }: { route: TaiseiRoute; setRoute: (r: TaiseiRoute) => void; state: AppState; onImport: () => void; onExport: () => void; onAuditComplete: (e: AuditHistoryEntry) => void; onObjectionChange: (draft: ObjectionDraft) => void; onObjectionExport: () => void; onObjectionReset: () => void }) {
+function TaiseiArea({ route, setRoute, state, onImport, onBackupImport, onBackupExport, onAuditComplete, onObjectionChange, onObjectionExport, onObjectionReset }: { route: TaiseiRoute; setRoute: (r: TaiseiRoute) => void; state: AppState; onImport: () => void; onBackupImport: () => void; onBackupExport: () => void; onAuditComplete: (e: AuditHistoryEntry) => void; onObjectionChange: (draft: ObjectionDraft) => void; onObjectionExport: () => void; onObjectionReset: () => void }) {
   const data = state.taiseihoukan;
-  if (!data) return <div className="stack-lg"><Panel><p className="eyebrow">大政奉還</p><h1>分析結果を読み込む</h1><p>ChatGPT等の外部分析で生成した taiseihoukan.zip を読み込んでください。</p><Button variant="primary" onClick={onImport}>大政奉還を読み込む</Button></Panel></div>;
+  if (!data) return <div className="stack-lg">
+    <Panel><p className="eyebrow">大政奉還</p><h1>分析結果を読み込む</h1><p>ChatGPT等の外部分析で生成した taiseihoukan.zip を読み込むか、別端末で書き出したバックアップZIPを復元してください。</p><div className="action-row"><Button variant="primary" onClick={onImport}>大政奉還を読み込む</Button><Button onClick={onBackupImport}>バックアップを読み込む</Button></div></Panel>
+  </div>;
   if (route === 'policy') return <PolicyView data={data} />;
   if (route === 'audit') return <AuditRunner data={data} onComplete={onAuditComplete} />;
+  if (route === 'history') return <AuditDashboard history={state.auditHistory} model={data.auditModel} />;
   if (route === 'objection') return <ObjectionForm draft={state.objectionDraft} onChange={onObjectionChange} onExport={onObjectionExport} onReset={onObjectionReset} />;
+  const lastAudit = [...state.auditHistory].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
   return <div className="stack-lg">
-    <Panel><p className="eyebrow">大政奉還</p><h1>基本方針</h1><p className="lead">現在の長期目標：{data.policy.longTermGoal}</p><div className="action-row"><Button variant="primary" onClick={() => setRoute('audit')}>状態監査を開始</Button><Button onClick={() => setRoute('policy')}>基本方針</Button><Button onClick={() => setRoute('objection')}>異議申し立て</Button></div></Panel>
-    <div className="dashboard-grid"><Panel><h3>状態監査履歴</h3><strong className="large-number">{state.auditHistory.length}</strong><p>履歴分析・グラフ化はMVPでは行いません。大政奉還の書き出しと異議申し立てZIPの補助資料に含まれます。</p></Panel><Panel><h3>再審査</h3><p>基本方針への異議は大政奉還本体へ追記せず、独立した異議申し立て状態として作成します。</p><div className="action-row"><Button variant="primary" onClick={() => setRoute('objection')}>異議申し立てを作成</Button><Button onClick={onExport}>現在の大政奉還を書き出す</Button></div></Panel></div>
+    <Panel><p className="eyebrow">大政奉還</p><h1>基本方針</h1><p className="lead">現在の長期目標：{data.policy.longTermGoal}</p><div className="action-row"><Button variant="primary" onClick={() => setRoute('audit')}>状態監査を開始</Button><Button onClick={() => setRoute('policy')}>基本方針</Button><Button onClick={() => setRoute('history')}>監査履歴</Button><Button onClick={() => setRoute('objection')}>異議申し立て</Button></div></Panel>
+    <div className="dashboard-grid">
+      <Panel><h3>状態監査履歴</h3><strong className="large-number">{state.auditHistory.length}</strong><p>{lastAudit ? `最終監査: ${new Date(lastAudit.createdAt).toLocaleString('ja-JP')}` : 'まだ監査履歴はありません。'}</p><div className="action-row"><Button variant="primary" onClick={() => setRoute('history')}>ダッシュボードを開く</Button></div></Panel>
+      <Panel><h3>ポータブルバックアップ</h3><p>現在の大政奉還と監査履歴を1つのZIPに保存します。大政奉還本体は読み取り専用で、サイト側から追記・変更しません。</p><div className="action-row"><Button variant="primary" onClick={onBackupExport}>バックアップを書き出す</Button><Button onClick={onBackupImport}>バックアップを読み込む</Button></div></Panel>
+      <Panel><h3>再審査</h3><p>基本方針への異議は大政奉還本体へ追記せず、独立した objection.zip としてChatGPTへ提出します。</p><div className="action-row"><Button onClick={() => setRoute('objection')}>異議申し立てを作成</Button></div></Panel>
+    </div>
   </div>;
 }

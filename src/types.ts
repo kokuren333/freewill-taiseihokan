@@ -109,17 +109,30 @@ export interface AuditHistoryEntry {
   createdAt: string;
   answers: AuditAnswer[];
   primaryStateId: string;
+  primaryStateLabel?: string;
   secondaryStateId?: string;
+  secondaryStateLabel?: string;
   probability: number;
   secondaryProbability?: number;
   confidence: 'high' | 'medium' | 'low';
   reasons: string[];
+  /** Snapshot identifier of the taiseihoukan/audit model used for this audit. */
+  taiseihoukanRevision?: string;
+}
+
+export interface TaiseihoukanArchive {
+  fileName: string;
+  importedAt: string;
+  blob: Blob;
+  sourceType?: 'original-import' | 'normalized-import' | 'backup-import';
 }
 
 export interface AppState {
   initialized: boolean;
   freeWill: FreeWillData;
   taiseihoukan: TaiseihoukanData | null;
+  /** Original imported taiseihoukan.zip when available. Stored as a Blob in IndexedDB. */
+  taiseihoukanArchive: TaiseihoukanArchive | null;
   auditHistory: AuditHistoryEntry[];
   objectionDraft: ObjectionDraft;
 }

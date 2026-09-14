@@ -1,12 +1,13 @@
 import Ajv from 'ajv';
 import JSZip from 'jszip';
-import type { AppState, FreeWillData, ObjectionDraft, TaiseihoukanData } from '../types';
-import { freeWillSchema, objectionSchema, taiseihoukanBundleSchema } from './schemas';
+import type { AppState, AuditHistoryEntry, FreeWillData, ObjectionDraft, TaiseihoukanArchive, TaiseihoukanData } from '../types';
+import { auditHistorySchema, freeWillSchema, objectionSchema, taiseihoukanBundleSchema } from './schemas';
 
 const ajv = new Ajv({ allErrors: true, strict: false });
 const validateFreeWill = ajv.compile(freeWillSchema);
 const validateTaisei = ajv.compile(taiseihoukanBundleSchema);
 const validateObjection = ajv.compile(objectionSchema);
+const validateAuditHistory = ajv.compile(auditHistorySchema);
 
 function dateStamp() {
   return new Date().toISOString().slice(0, 10);
@@ -92,21 +93,62 @@ export async function exportMemoryTaiseihoukanRequestZip() {
   downloadBlob(blob, `memory-taiseihoukan-request_${dateStamp()}.zip`);
 }
 
-export async function exportTaiseihoukanZip(state: AppState) {
-  if (!state.taiseihoukan) throw new Error('大政奉還データがありません');
+async function canonicalTaiseihoukanBlob(data: TaiseihoukanData) {
   const zip = new JSZip();
   const root = zip.folder('taiseihoukan')!;
-  const t = state.taiseihoukan;
-  const files = ['policy.json', 'personal-model.json', 'audit-model.json', 'analysis.md', 'audit-history.json', 'schemas/taiseihoukan.schema.json'];
-  root.file('manifest.json', json({ format: 'taiseihoukan', schemaVersion: '1.0.0', createdAt: new Date().toISOString(), files }));
-  root.file('policy.json', json(t.policy));
-  root.file('personal-model.json', json(t.personalModel));
-  root.file('audit-model.json', json(t.auditModel));
-  root.file('analysis.md', t.analysis || '# 分析\n');
-  root.file('audit-history.json', json(state.auditHistory));
+  const files = ['policy.json', 'personal-model.json', 'audit-model.json', 'analysis.md', 'schemas/taiseihoukan.schema.json'];
+  root.file('manifest.json', json({ format: 'taiseihoukan', schemaVersion: '1.0.0', createdAt: String(data.manifest.createdAt ?? new Date().toISOString()), files }));
+  root.file('policy.json', json(data.policy));
+  root.file('personal-model.json', json(data.personalModel));
+  root.file('audit-model.json', json(data.auditModel));
+  root.file('analysis.md', data.analysis || '# 分析\n');
   root.folder('schemas')!.file('taiseihoukan.schema.json', json(taiseihoukanBundleSchema));
+  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+}
+
+async function sha256Hex(blob: Blob) {
+  const hash = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return [...new Uint8Array(hash)].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+const BACKUP_README = `# 大政奉還バックアップ
+
+このZIPはWebアプリの可搬バックアップです。現在有効な大政奉還ZIPと状態監査履歴だけを含みます。自由意志フォームと異議申し立て下書きは含みません。
+
+- taiseihoukan.zip: 現在有効な大政奉還。元の読み込みZIPを保持できている場合はそのBlobをそのまま格納します。
+- audit-history.json: 状態監査履歴。ダッシュボードの集計元です。
+
+別端末では「バックアップを読み込む」から復元してください。
+`;
+
+export async function exportBackupZip(state: AppState) {
+  if (!state.taiseihoukan) throw new Error('バックアップ対象の大政奉還データがありません');
+  if (!validateAuditHistory(state.auditHistory)) throw new Error(ajvErrors('audit-history.json: ', validateAuditHistory.errors));
+
+  const sourceBlob = state.taiseihoukanArchive?.blob ?? await canonicalTaiseihoukanBlob(state.taiseihoukan);
+  const sourceType = state.taiseihoukanArchive?.sourceType ?? (state.taiseihoukanArchive ? 'original-import' : 'reconstructed-from-local-state');
+  const sourceHash = await sha256Hex(sourceBlob);
+  const zip = new JSZip();
+  const root = zip.folder('taiseihoukan-backup')!;
+  const files = ['taiseihoukan.zip', 'audit-history.json', 'README.md', 'schemas/audit-history.schema.json'];
+  root.file('manifest.json', json({
+    format: 'taiseihoukan-backup',
+    schemaVersion: '1.0.0',
+    createdAt: new Date().toISOString(),
+    files,
+    auditHistoryCount: state.auditHistory.length,
+    taiseihoukanSource: {
+      sourceType,
+      fileName: state.taiseihoukanArchive?.fileName ?? 'taiseihoukan.zip',
+      sha256: sourceHash,
+    },
+  }));
+  root.file('taiseihoukan.zip', sourceBlob);
+  root.file('audit-history.json', json(state.auditHistory));
+  root.file('README.md', BACKUP_README);
+  root.folder('schemas')!.file('audit-history.schema.json', json(auditHistorySchema));
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
-  downloadBlob(blob, `taiseihoukan_${dateStamp()}.zip`);
+  downloadBlob(blob, `taiseihoukan-backup_${dateStamp()}.zip`);
 }
 
 function objectionHasContent(draft: ObjectionDraft) {
@@ -229,7 +271,7 @@ function validateAuditIntegrity(data: TaiseihoukanData) {
   }
 }
 
-export async function importTaiseihoukanZip(file: File): Promise<{ data: TaiseihoukanData; warnings: string[] }> {
+export async function importTaiseihoukanZip(file: File): Promise<{ data: TaiseihoukanData; warnings: string[]; archive: TaiseihoukanArchive }> {
   const zip = await JSZip.loadAsync(file);
   const manifest = await readJson(zip, 'manifest.json');
   const required = ['policy.json', 'personal-model.json', 'audit-model.json', 'analysis.md', 'schemas/taiseihoukan.schema.json'];
@@ -248,10 +290,59 @@ export async function importTaiseihoukanZip(file: File): Promise<{ data: Taiseih
   if (!validateTaisei(bundle)) throw new Error(ajvErrors('taiseihoukan: ', validateTaisei.errors));
   validateAuditIntegrity(data);
   const warnings: string[] = [];
-  if (findFile(zip, 'objections.json')) warnings.push('旧形式の objections.json は読み込みましたが、大政奉還本体には取り込みません。異議申し立ては独立データとして扱います。');
+  const hasLegacyObjections = Boolean(findFile(zip, 'objections.json'));
+  const hasEmbeddedAuditHistory = Boolean(findFile(zip, 'audit-history.json'));
+  if (hasLegacyObjections) warnings.push('旧形式の objections.json は大政奉還本体には取り込みません。異議申し立ては独立データとして扱います。');
+  if (hasEmbeddedAuditHistory) warnings.push('旧形式の audit-history.json は大政奉還本体から分離します。監査履歴はバックアップ側で管理してください。');
   const sc = data.auditModel.states.length;
   const qc = data.auditModel.questions.length;
   if (sc < 18 || sc > 30) warnings.push(`状態数 ${sc}。仕様上の推奨は18〜30です。`);
   if (qc < 50 || qc > 80) warnings.push(`質問数 ${qc}。仕様上の推奨は50〜80です。`);
-  return { data, warnings };
+  const needsNormalization = hasLegacyObjections || hasEmbeddedAuditHistory;
+  const archiveBlob = needsNormalization ? await canonicalTaiseihoukanBlob(data) : file.slice(0, file.size, file.type || 'application/zip');
+  const archive: TaiseihoukanArchive = {
+    fileName: needsNormalization ? 'taiseihoukan.zip' : (file.name || 'taiseihoukan.zip'),
+    importedAt: new Date().toISOString(),
+    blob: archiveBlob,
+    sourceType: needsNormalization ? 'normalized-import' : 'original-import',
+  };
+  return { data, warnings, archive };
+}
+
+export async function importBackupZip(file: File): Promise<{ data: TaiseihoukanData; auditHistory: AuditHistoryEntry[]; archive: TaiseihoukanArchive; warnings: string[] }> {
+  const zip = await JSZip.loadAsync(file);
+  const manifest = await readJson(zip, 'manifest.json');
+  const required = ['taiseihoukan.zip', 'audit-history.json', 'README.md', 'schemas/audit-history.schema.json'];
+  assertRequiredFiles(zip, required);
+  assertManifestFiles(manifest, required);
+  if (manifest.format !== 'taiseihoukan-backup') throw new Error('manifest.json: format が taiseihoukan-backup ではありません');
+  if (manifest.schemaVersion !== '1.0.0') throw new Error(`manifest.json: 未対応 schemaVersion ${String(manifest.schemaVersion)}`);
+
+  const historyRaw: unknown = await readJson(zip, 'audit-history.json');
+  if (!validateAuditHistory(historyRaw)) throw new Error(ajvErrors('audit-history.json: ', validateAuditHistory.errors));
+  if (!Array.isArray(historyRaw)) throw new Error('audit-history.json: 配列ではありません');
+  const history = historyRaw as AuditHistoryEntry[];
+
+  const embedded = findFile(zip, 'taiseihoukan.zip');
+  if (!embedded) throw new Error('必須ファイルがありません: taiseihoukan.zip');
+  const taiseihoukanBlob = await embedded.async('blob');
+  const expectedHash = String(manifest?.taiseihoukanSource?.sha256 ?? '');
+  if (expectedHash) {
+    const actualHash = await sha256Hex(taiseihoukanBlob);
+    if (actualHash !== expectedHash) throw new Error('バックアップ内の taiseihoukan.zip のSHA-256がmanifestと一致しません');
+  }
+
+  const embeddedName = String(manifest?.taiseihoukanSource?.fileName ?? 'taiseihoukan.zip');
+  const taiseihoukanFile = new File([taiseihoukanBlob], embeddedName, { type: 'application/zip' });
+  const imported = await importTaiseihoukanZip(taiseihoukanFile);
+  const warnings = [...imported.warnings];
+  if (typeof manifest.auditHistoryCount === 'number' && manifest.auditHistoryCount !== history.length) {
+    warnings.push(`manifestの監査履歴件数 ${manifest.auditHistoryCount} と audit-history.json の件数 ${history.length} が一致しません。`);
+  }
+  return {
+    data: imported.data,
+    auditHistory: history,
+    archive: { fileName: embeddedName, importedAt: new Date().toISOString(), blob: taiseihoukanBlob, sourceType: 'backup-import' },
+    warnings,
+  };
 }

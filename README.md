@@ -13,7 +13,7 @@
 - 入力補助用のChatGPT貼り付けプロンプト
 - 自由意志ZIP import / export
 - **手入力とは独立した「ChatGPT Memoryから大政奉還」依頼ZIP export**
-- 大政奉還ZIP import / export
+- 大政奉還ZIP **import only**（サイト側からは変更・追記しない）
 - JSON Schema検証（Ajv）
 - audit-modelのstate/question参照整合性検証
 - 基本方針表示 / レスポンシブ方針グラフ
@@ -21,7 +21,9 @@
 - 主状態 + 副状態候補 + 上位候補分布表示
 - 行動決定は主状態のみ、副状態は解釈補助
 - 状態監査の「1問戻る」
-- 状態監査履歴のローカル保存 / ZIP同梱
+- 状態監査履歴のローカル保存 / 日・週・月別ダッシュボード集計
+- 主状態・副状態・状態遷移・最近30日の構成変化などの記述的傾向表示
+- 現在の大政奉還 + 状態監査履歴をまとめたポータブルバックアップZIP import / export
 - 異議申し立てを大政奉還本体と分離した独立下書きとして自動保存
 - 複数の変更対象を同時記入できる異議申し立てフォーム
 - 異議申し立て記入のリセット
@@ -48,7 +50,9 @@ npm run preview
 
 ## データ保存
 
-入力データはIndexedDB `jiyuu-ishi-taiseihoukan` に保存します。外部DB、認証、LLM API、OpenAI API等は使用しません。
+入力データはIndexedDB `jiyuu-ishi-taiseihoukan` に自動保存します。IndexedDBは端末内の作業保存領域であり、端末間同期の正本ではありません。外部DB、認証、LLM API、OpenAI API等は使用しません。
+
+大政奉還を読み込んだ場合、可能な限り元の `taiseihoukan.zip` 自体をBlobとしてIndexedDBに保持します。状態監査履歴は別データとして蓄積し、バックアップ時に両者を束ねます。
 
 「記入内容をリセット」は自由意志側の簡易入力・詳細入力・心理回答・進捗だけを初期化します。読み込み済みの大政奉還データと状態監査履歴は削除しません。
 
@@ -94,7 +98,7 @@ memory-taiseihoukan-request/
 
 ## 大政奉還ZIP
 
-`taiseihoukan_YYYY-MM-DD.zip`
+`taiseihoukan.zip` はChatGPT等の外部分析が生成する**読み取り専用の規範データ**として扱います。サイトでは読み込みだけを行い、監査履歴や異議申し立てを追記して再出力しません。
 
 ```text
 taiseihoukan/
@@ -103,12 +107,48 @@ taiseihoukan/
 ├── personal-model.json
 ├── audit-model.json
 ├── analysis.md
-├── audit-history.json
 └── schemas/
     └── taiseihoukan.schema.json
 ```
 
-異議申し立ては大政奉還ZIPへ蓄積しません。現在の大政奉還は「有効な基準状態」として保ち、異議は別の下書き状態に保存します。
+旧形式のZIPに `audit-history.json` や `objections.json` が含まれる場合は互換読み込みしますが、運用データを大政奉還本体から分離した正規形へ内部的に正規化します。
+
+## ポータブルバックアップ
+
+状態監査履歴はIndexedDBへ自動保存されますが、端末・ブラウザを跨いでは自動同期されません。そのため、現在有効な大政奉還と監査履歴だけをまとめたバックアップZIPを用意します。
+
+`taiseihoukan-backup_YYYY-MM-DD.zip`
+
+```text
+taiseihoukan-backup/
+├── manifest.json
+├── taiseihoukan.zip
+├── audit-history.json
+├── README.md
+└── schemas/
+    └── audit-history.schema.json
+```
+
+- 元の `taiseihoukan.zip` を保持している場合はそのBlobをそのまま格納
+- SHA-256をmanifestへ記録し、復元時に整合性確認
+- 自由意志フォームと異議申し立て下書きは含めない
+- 別端末では「バックアップを読み込む」で大政奉還 + 監査履歴を復元
+
+## 監査履歴ダッシュボード
+
+状態監査履歴は以下の粒度で集計できます。
+
+- 日ごと: 直近30日
+- 週ごと: 直近12週
+- 月ごと: 直近12か月
+- 各期間の監査回数、最多主状態、平均主状態確率、平均質問数
+- 主状態 / 副状態の出現構成
+- 最頻状態、同一主状態の連続率、高信頼度判定率
+- 直近30日とその前30日の状態構成差
+- 監査間の主状態遷移
+- 最近の監査一覧
+
+この集計は記述的な観測専用です。履歴を次回監査のpriorへ自動反映しないため、過去の判定が自己強化的に次の判定を固定することを避けています。
 
 ## 異議申し立てZIP
 
@@ -180,4 +220,4 @@ ChatGPTで再審査
 
 ## 仕様
 
-`docs/SPEC.md` は初版仕様を保存しています。実運用後の変更点は `docs/IMPLEMENTATION_NOTES.md` の最新版（v1.2）を優先してください。
+`docs/SPEC.md` は初版仕様を保存しています。実運用後の変更点は `docs/IMPLEMENTATION_NOTES.md` の最新版（v1.3）を優先してください。

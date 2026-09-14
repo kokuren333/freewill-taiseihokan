@@ -58,10 +58,17 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
     const [primaryId, probability] = rankedFinal[0] ?? ['', 0];
     const secondary = secondaryCandidate(finalDist);
     const finalInformativeCount = finalAnswers.filter((a) => a.value !== null).length;
+    const primaryState = model.states.find((state) => state.id === primaryId);
+    const secondaryState = secondary ? model.states.find((state) => state.id === secondary.secondaryId) : undefined;
     const entry: AuditHistoryEntry = {
       id: crypto.randomUUID(), createdAt: new Date().toISOString(), answers: finalAnswers,
-      primaryStateId: primaryId, probability, confidence: confidenceFor(finalDist, finalInformativeCount), reasons: influentialAnswers(model, finalAnswers, finalDist),
-      ...(secondary ? { secondaryStateId: secondary.secondaryId, secondaryProbability: secondary.secondaryProbability } : {}),
+      primaryStateId: primaryId,
+      primaryStateLabel: primaryState?.label,
+      probability,
+      confidence: confidenceFor(finalDist, finalInformativeCount),
+      reasons: influentialAnswers(model, finalAnswers, finalDist),
+      taiseihoukanRevision: String(data.manifest.createdAt ?? data.manifest.schemaVersion ?? 'unknown'),
+      ...(secondary ? { secondaryStateId: secondary.secondaryId, secondaryStateLabel: secondaryState?.label, secondaryProbability: secondary.secondaryProbability } : {}),
     };
     setFinished(true);
     onComplete(entry);
