@@ -120,6 +120,8 @@ Memoryルートでは現在のフォーム入力、`free-will.json`、`summary.m
 
 IndexedDBは端末内の作業保存領域とし、端末間移行・サイトデータ削除対策として `taiseihoukan-backup_YYYY-MM-DD.zip` を追加した。
 
+日時は、JSON内ではUTCのISO 8601形式で保存する。画面表示・日別集計・`free-will_YYYY-MM-DD.zip`、`memory-taiseihoukan-request_YYYY-MM-DD.zip`、`taiseihoukan-backup_YYYY-MM-DD.zip`、`objection_YYYY-MM-DD.zip`のファイル名は、操作したブラウザのローカル時刻を使う。
+
 バックアップは次の2つを正本として束ねる。
 
 1. 現在有効な `taiseihoukan.zip`

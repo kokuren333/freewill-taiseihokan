@@ -119,6 +119,8 @@ taiseihoukan/
 
 `taiseihoukan-backup_YYYY-MM-DD.zip`
 
+アプリが書き出す`YYYY-MM-DD`付きZIPファイル名の日付は、書き出しを実行したブラウザのローカル時刻です。ZIP内部の`createdAt`、監査履歴の`createdAt`、`updatedAt`はUTCのISO 8601形式で保存し、画面表示と日別集計はブラウザのローカル時刻へ変換します。
+
 ```text
 taiseihoukan-backup/
 ├── manifest.json

@@ -10,7 +10,8 @@ const validateObjection = ajv.compile(objectionSchema);
 const validateAuditHistory = ajv.compile(auditHistorySchema);
 
 function dateStamp() {
-  return new Date().toISOString().slice(0, 10);
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function json(value: unknown) {
@@ -293,11 +294,17 @@ function validateAuditIntegrity(data: TaiseihoukanData) {
 
 export async function importTaiseihoukanZip(file: File): Promise<{ data: TaiseihoukanData; warnings: string[]; archive: TaiseihoukanArchive }> {
   const zip = await JSZip.loadAsync(file);
-  const manifest = await readJson(zip, 'manifest.json');
+  const rawManifest = await readJson(zip, 'manifest.json');
+  const manifestFormat = rawManifest.format ?? rawManifest.packageType;
+  const manifest = {
+    ...rawManifest,
+    format: manifestFormat,
+    createdAt: rawManifest.createdAt ?? rawManifest.generatedAt,
+  };
   const required = ['policy.json', 'personal-model.json', 'audit-model.json', 'analysis.md', 'schemas/taiseihoukan.schema.json'];
   assertRequiredFiles(zip, required);
   assertManifestFiles(manifest, required);
-  if (manifest.format !== 'taiseihoukan') throw new Error('manifest.json: format が taiseihoukan ではありません');
+  if (manifestFormat !== 'taiseihoukan') throw new Error('manifest.json: format が taiseihoukan ではありません');
   if (manifest.schemaVersion !== '1.0.0') throw new Error(`manifest.json: 未対応 schemaVersion ${String(manifest.schemaVersion)}`);
   const data: TaiseihoukanData = {
     manifest,
