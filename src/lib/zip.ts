@@ -44,6 +44,22 @@ const MEMORY_TAISEIHOUKAN_README = `# README_FOR_CHATGPT\n\nこれは「ChatGPT 
 
 const MEMORY_TAISEIHOUKAN_PROMPT = `# generation_prompt\n\nこのZIPは手入力データの補完用ではありません。「手入力ルート」と「ChatGPT Memoryルート」は独立しています。\n\nREADME_FOR_CHATGPT.md を読み、ChatGPTで現在利用可能なMemory・過去会話文脈だけを情報源として人物情報を構造化し、そのまま taiseihoukan.zip を生成してください。現在のWebフォームに何が入力されているかは参照できないものとして扱い、推測で混合しないでください。\n`;
 
+const AUDIT_MODEL_GENERATION_RULES = `
+
+## audit-model生成時の基準状態バイアス対策
+
+ここでいう「基準状態」とは、問題が顕在化していない、通常運転、安定運転、健康寄り、または既存手順を継続できる状態を意味する。状態ラベルが「通常状態」「安全運転」「基本状態」「健康状態」「安定運転」など何であっても、ラベル名を条件にして特別扱いしない。説明・質問設計・推奨処理の意味から、基準状態に相当するかを判断する。
+
+1. 基準状態だからという理由だけでpriorを最高値にしない。priorは今回の人物について確認できた現在の事実から説明できる範囲で配分する。
+2. priorが他状態の中央値の2倍を超える、または半分を下回る状態がある場合は、analysis.mdに具体的な根拠・不確実性・その偏りを採用した理由を書く。根拠が弱い場合は極端なpriorを避ける。
+3. 健康・安全・回復に関する状態を、基準状態の対極として機械的に最低priorへ落とさない。Memoryや入力に休職、通院、服薬、副作用、強い疲労、安全上の懸念などがある場合は、該当状態を低くしすぎない理由を説明する。
+4. 基準状態をすべての問題質問に対する単なる「いいえ」の受け皿にしない。安定運転、判断可能性、回復、集中などを直接確認する肯定的な質問と、問題の不在を確認する質問を両方設ける。
+5. 非基準状態を一つの共通generic likelihoodで埋めない。各状態に2〜4問程度の固有の識別質問を持たせ、質問数が足りない場合は、推奨処理が同じ状態を統合する。
+6. 逆向きの質問を作る場合は、回答方向とlikelihoodの意味を正しく反転する。すべての質問で「はい」が悪化、「いいえ」が正常になる単調な設計にしない。
+7. 各状態の推奨処理が実質的に同じなら、ラベルを変えて別状態として残さない。状態を分ける場合は、最も近い状態との違いと、処理を分ける必要性をanalysis.mdに書く。
+8. audit-model.jsonを完成させた後、(a) priorの偏り、(b) 基準状態の質問方向への依存、(c) 状態間の重複likelihood、(d) 健康・安全状態の過小評価、(e) 推奨処理の重複を自己監査する。自己監査の結果もanalysis.mdに記載する。
+`;
+
 const OBJECTION_README = `# README_FOR_CHATGPT — 異議申し立て再審査\n\nこのZIPは、現在の大政奉還そのものを書き換えたデータではありません。現在の大政奉還を基準状態として保持したまま、別管理された「異議申し立て」を再審査するための依頼です。\n\n## 入力\n- objection.json: 利用者が現在提出している異議。複数の変更対象を同時に含み得ます。\n- current-taiseihoukan/: 現在有効な基本方針・人物モデル・状態監査モデル・分析。\n- audit-history.json: サイト内に保存されている状態監査履歴。補助資料であり、単独で方針変更を正当化しません。\n\n## 再審査ルール\n1. 異議を自動承認しない。新規事実、当初前提との差、既に試した対応、継続時の問題を分離して評価する。\n2. current-taiseihoukan/policy.json の changeConditions を確認する。ただし、changeConditions自体への異議や、当初想定されていない重大な前提変化がある場合は機械的な拒否条件にしない。\n3. 一時的な感情、単発の失敗、比較による焦りだけで基本方針を反転させない。\n4. 複数の変更対象が同時に提出されている場合は、項目ごとに採用・不採用・部分採用を判断し、相互依存があればまとめて整合させる。\n5. 変更不要な項目は可能な限り維持する。変更が他項目へ波及する場合だけ連動変更し、その理由を analysis.md に書く。\n6. 状態監査モデルを変更する場合も、状態18〜30、質問50〜80、現在状態から事前定義行動へのルーティング、主状態優先・副状態は解釈補助という原則を維持する。\n7. 事実と推論と不確実性を区別し、過剰な人格断定や新規の医学的診断を行わない。\n8. 異議申し立てそのものを新しい大政奉還データへ履歴として埋め込まない。\n\n## 最終出力\n再審査後は、現在の大政奉還を置き換える**新しい taiseihoukan.zip**を返してください。objection.zipを返すのではありません。\n\n必須構成:\n\ntaiseihoukan/\n├── manifest.json\n├── policy.json\n├── personal-model.json\n├── audit-model.json\n├── analysis.md\n└── schemas/\n    └── taiseihoukan.schema.json\n\nanalysis.md には少なくとも「異議の各項目に対する判断」「採用した変更」「採用しなかった変更と理由」「変更による波及」「残る不確実性」を記載してください。\n`;
 
 const OBJECTION_PROMPT = `# generation_prompt\n\nREADME_FOR_CHATGPT.md を最初に読み、objection.json と current-taiseihoukan/ の現在状態を比較して再審査してください。異議申し立ては複数対象を一度に含むため、空欄でない targetChanges をすべて検討してください。\n\n再審査後は objection.json を更新するのではなく、置換用の新しい taiseihoukan.zip を生成してください。異議履歴は新しい大政奉還本体へ混入させないでください。\n`;
@@ -62,8 +78,8 @@ export async function exportFreeWillZip(data: FreeWillData) {
   root.file('manifest.json', json(manifest));
   root.file('free-will.json', json(data));
   root.file('summary.md', freeWillSummary(data));
-  root.file('README_FOR_CHATGPT.md', README_FOR_CHATGPT);
-  root.file('generation_prompt.md', GENERATION_PROMPT);
+  root.file('README_FOR_CHATGPT.md', README_FOR_CHATGPT + AUDIT_MODEL_GENERATION_RULES);
+  root.file('generation_prompt.md', GENERATION_PROMPT + AUDIT_MODEL_GENERATION_RULES);
   root.folder('schemas')!.file('free-will.schema.json', json(freeWillSchema));
   root.folder('schemas')!.file('taiseihoukan.schema.json', json(taiseihoukanBundleSchema));
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
@@ -85,8 +101,8 @@ export async function exportMemoryTaiseihoukanRequestZip() {
     includesFormData: false,
     files,
   }));
-  root.file('README_FOR_CHATGPT.md', MEMORY_TAISEIHOUKAN_README);
-  root.file('generation_prompt.md', MEMORY_TAISEIHOUKAN_PROMPT);
+  root.file('README_FOR_CHATGPT.md', MEMORY_TAISEIHOUKAN_README + AUDIT_MODEL_GENERATION_RULES);
+  root.file('generation_prompt.md', MEMORY_TAISEIHOUKAN_PROMPT + AUDIT_MODEL_GENERATION_RULES);
   root.folder('schemas')!.file('free-will.schema.json', json(freeWillSchema));
   root.folder('schemas')!.file('taiseihoukan.schema.json', json(taiseihoukanBundleSchema));
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
@@ -185,7 +201,7 @@ export async function exportObjectionZip(state: AppState) {
     files,
   }));
   root.file('objection.json', json(state.objectionDraft));
-  root.file('README_FOR_CHATGPT.md', OBJECTION_README);
+  root.file('README_FOR_CHATGPT.md', OBJECTION_README + AUDIT_MODEL_GENERATION_RULES);
   root.file('generation_prompt.md', OBJECTION_PROMPT);
   const current = root.folder('current-taiseihoukan')!;
   current.file('policy.json', json(t.policy));
