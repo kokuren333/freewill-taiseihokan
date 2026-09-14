@@ -333,8 +333,8 @@ export async function importTaiseihoukanZip(file: File): Promise<{ data: Taiseih
   if (hasEmbeddedAuditHistory) warnings.push('旧形式の audit-history.json は大政奉還本体から分離します。監査履歴はバックアップ側で管理してください。');
   const sc = data.auditModel.states.length;
   const qc = data.auditModel.questions.length;
-  if (sc < 18 || sc > 30) warnings.push(`状態数 ${sc}。仕様上の推奨は18〜30です。`);
-  if (qc < 50 || qc > 80) warnings.push(`質問数 ${qc}。仕様上の推奨は50〜80です。`);
+  if (sc < 8 || sc > 12) warnings.push(`状態数 ${sc}。仕様上の推奨は8〜12です。`);
+  if (qc < 32 || qc > 48) warnings.push(`質問数 ${qc}。仕様上の推奨は32〜48です。`);
   const needsNormalization = hasLegacyObjections || hasEmbeddedAuditHistory;
   const archiveBlob = needsNormalization ? await canonicalTaiseihoukanBlob(data) : file.slice(0, file.size, file.type || 'application/zip');
   const archive: TaiseihoukanArchive = {
