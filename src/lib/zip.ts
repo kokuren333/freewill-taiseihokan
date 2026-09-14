@@ -45,6 +45,8 @@ const MEMORY_TAISEIHOUKAN_README = `# README_FOR_CHATGPT\n\nこれは「ChatGPT 
 
 const MEMORY_TAISEIHOUKAN_PROMPT = `# generation_prompt\n\nこのZIPは手入力データの補完用ではありません。「手入力ルート」と「ChatGPT Memoryルート」は独立しています。\n\nREADME_FOR_CHATGPT.md を読み、ChatGPTで現在利用可能なMemory・過去会話文脈だけを情報源として人物情報を構造化し、そのまま taiseihoukan.zip を生成してください。現在のWebフォームに何が入力されているかは参照できないものとして扱い、推測で混合しないでください。\n`;
 
+const CURRENT_AUDIT_MODEL_SPEC = `# 最優先仕様 — 状態監査モデル\n\n状態監査モデルは必ず状態8〜12（推奨10）、質問32〜48（推奨40）で生成してください。以前のテンプレートに「18〜30状態」「50〜80問」「24状態」「約60問」と書かれていても、それらは旧仕様なので無視してください。主状態の通常判定は主状態40%以上・2位との差10ポイント以上を目安とし、主状態と副状態を少ない回答で決定できるよう、各状態に固有の識別質問を用意してください。\n\nこれは性格診断ではなく、今日・直近24〜72時間・今週の短期状態監査です。\n\n`;
+
 const AUDIT_MODEL_GENERATION_RULES = `
 
 ## audit-model生成時の基準状態バイアス対策
@@ -89,8 +91,8 @@ export async function exportFreeWillZip(data: FreeWillData) {
   root.file('manifest.json', json(manifest));
   root.file('free-will.json', json(data));
   root.file('summary.md', freeWillSummary(data));
-  root.file('README_FOR_CHATGPT.md', README_FOR_CHATGPT + AUDIT_MODEL_GENERATION_RULES);
-  root.file('generation_prompt.md', GENERATION_PROMPT + AUDIT_MODEL_GENERATION_RULES);
+  root.file('README_FOR_CHATGPT.md', CURRENT_AUDIT_MODEL_SPEC + README_FOR_CHATGPT + AUDIT_MODEL_GENERATION_RULES);
+  root.file('generation_prompt.md', CURRENT_AUDIT_MODEL_SPEC + GENERATION_PROMPT + AUDIT_MODEL_GENERATION_RULES);
   root.folder('schemas')!.file('free-will.schema.json', json(freeWillSchema));
   root.folder('schemas')!.file('taiseihoukan.schema.json', json(taiseihoukanBundleSchema));
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
@@ -112,8 +114,8 @@ export async function exportMemoryTaiseihoukanRequestZip() {
     includesFormData: false,
     files,
   }));
-  root.file('README_FOR_CHATGPT.md', MEMORY_TAISEIHOUKAN_README + AUDIT_MODEL_GENERATION_RULES);
-  root.file('generation_prompt.md', MEMORY_TAISEIHOUKAN_PROMPT + AUDIT_MODEL_GENERATION_RULES);
+  root.file('README_FOR_CHATGPT.md', CURRENT_AUDIT_MODEL_SPEC + MEMORY_TAISEIHOUKAN_README + AUDIT_MODEL_GENERATION_RULES);
+  root.file('generation_prompt.md', CURRENT_AUDIT_MODEL_SPEC + MEMORY_TAISEIHOUKAN_PROMPT + AUDIT_MODEL_GENERATION_RULES);
   root.folder('schemas')!.file('free-will.schema.json', json(freeWillSchema));
   root.folder('schemas')!.file('taiseihoukan.schema.json', json(taiseihoukanBundleSchema));
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
@@ -212,8 +214,8 @@ export async function exportObjectionZip(state: AppState) {
     files,
   }));
   root.file('objection.json', json(state.objectionDraft));
-  root.file('README_FOR_CHATGPT.md', OBJECTION_README + AUDIT_MODEL_GENERATION_RULES);
-  root.file('generation_prompt.md', OBJECTION_PROMPT);
+  root.file('README_FOR_CHATGPT.md', CURRENT_AUDIT_MODEL_SPEC + OBJECTION_README + AUDIT_MODEL_GENERATION_RULES);
+  root.file('generation_prompt.md', CURRENT_AUDIT_MODEL_SPEC + OBJECTION_PROMPT + AUDIT_MODEL_GENERATION_RULES);
   const current = root.folder('current-taiseihoukan')!;
   current.file('policy.json', json(t.policy));
   current.file('personal-model.json', json(t.personalModel));
