@@ -3,6 +3,7 @@ import { detailSections } from '../data/detailSections';
 import type { FreeWillData } from '../types';
 import { Button, Modal, Panel, ProgressBar } from './Common';
 import PsychForm from './PsychForm';
+import { ReferenceSourcesForm } from './ReferenceSourcesForm';
 
 const quickFields = {
   profile: [
@@ -47,6 +48,7 @@ export function QuickForm({ data, onChange }: { data: FreeWillData; onChange: (d
     <Panel><h3>現状</h3>{quickFields.current.map(([key, label]) => <TextField key={key} label={label} value={current[key] ?? ''} onChange={(v) => setCurrent(key, v)} />)}</Panel>
     <Panel><h3>希望</h3>{quickFields.preferences.map(([key, label]) => <TextField key={key} label={label} value={data.preferences[key] ?? ''} onChange={(v) => setPref(key, v)} />)}</Panel>
     <PsychForm mode="quick" data={data} onChange={onChange} />
+    <ReferenceSourcesForm data={data} onChange={onChange} />
   </div>;
 }
 
@@ -97,6 +99,7 @@ export function DetailedForm({ data, onChange }: { data: FreeWillData; onChange:
         </Panel>}
       </main>
     </div>
+    <ReferenceSourcesForm data={data} onChange={onChange} />
   </div>;
 }
 

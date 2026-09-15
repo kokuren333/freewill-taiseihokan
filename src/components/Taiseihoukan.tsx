@@ -1,9 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import type { AuditAnswer, AuditHistoryEntry, ObjectionDraft, TaiseihoukanData } from '../types';
+import type { AuditAnswer, AuditHistoryEntry, TaiseihoukanData } from '../types';
 import type { Distribution } from '../lib/audit';
 import { AUDIT_CANDIDATE_DISPLAY_THRESHOLD, AUDIT_MIN_QUESTIONS, chooseNextQuestion, confidenceFor, decisionQuality, distributionAfterAnswers, influentialAnswers, initialDistribution, rankedStates, secondaryCandidate, shouldStop, updateDistribution } from '../lib/audit';
 import { Button, Notice, Panel, ProgressBar } from './Common';
-import { objectionTargetCount, objectionTargetLabels } from '../data/objection';
 
 export function PolicyGraph({ data }: { data: TaiseihoukanData }) {
   const p = data.policy;
@@ -133,7 +132,7 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
 
   return <div className="audit-shell">
     <Panel>
-      <div className="section-heading"><div><h2>状態監査</h2><p>現在の状態パターンを探索し、事前に定義された行動様式へルーティングします。候補が十分に安定した時点で終了し、情報が増えなくなった場合は暫定判定します。</p></div><span className="status-chip">通常 3問〜</span></div>
+      <div className="section-heading"><div><h2>状態監査</h2><p>現在の状態パターンを探索し、事前に定義された行動様式へルーティングします。主状態と副状態の組み合わせが複数回答で安定した時点で終了し、情報が増えなくなった場合は暫定判定します。</p></div><span className="status-chip">通常 6〜8問</span></div>
       <ProgressBar value={answers.length} max={model.questions.length} label={`${answers.length} / ${model.questions.length}`} />
       <p className="muted">{AUDIT_MIN_QUESTIONS}問目以降、候補が十分に安定した時点で終了します。質問バンクを使い切るか情報が増えなくなった場合も、最上位候補で必ず判定します。AI推論は実行せず、読み込まれた状態モデルと回答だけで次質問を選択します。</p>
     </Panel>
@@ -144,52 +143,5 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
       <div className="audit-answer-grid">{answerOptions.map((o) => <Button key={String(o.value)} variant={o.value === null ? 'quiet' : 'default'} onClick={() => answer(o.value)}>{o.label}</Button>)}</div>
       {answers.length > 0 && <div className="audit-question-actions"><Button variant="quiet" onClick={undoLast}>1問戻る</Button><span className="muted">誤入力した場合、直前の回答を取り消して分布を再計算できます。</span></div>}
     </Panel> : <Notice tone="warn">未質問の質問候補がありません。現在分布の最上位候補で判定します。<div><Button onClick={() => finalize()}>判定を表示</Button></div></Notice>}
-  </div>;
-}
-
-export function ObjectionForm({ draft, onChange, onExport, onReset }: { draft: ObjectionDraft; onChange: (draft: ObjectionDraft) => void; onExport: () => void; onReset: () => void }) {
-  const updateTarget = (key: keyof ObjectionDraft['targetChanges'], value: string) => {
-    onChange({ ...draft, updatedAt: new Date().toISOString(), targetChanges: { ...draft.targetChanges, [key]: value } });
-  };
-  const updateField = (key: 'newFacts' | 'premiseDifference' | 'attemptedResponses' | 'continuationProblem' | 'additionalContext', value: string) => {
-    onChange({ ...draft, updatedAt: new Date().toISOString(), [key]: value });
-  };
-  const activeTargets = objectionTargetCount(draft);
-
-  return <div className="stack-lg">
-    <Notice tone="info"><strong>独立データ:</strong> ここで記入した異議は現在の大政奉還データへ追記されません。別の異議申し立て状態として自動保存され、<code>objection.zip</code> にだけ含まれます。ChatGPTへ渡した後は、新しい <code>taiseihoukan.zip</code> を読み込んで現在方針を置き換えます。</Notice>
-
-    <Panel>
-      <div className="section-heading">
-        <div><h2>異議申し立て</h2><p>変更したい対象を複数同時に記入できます。該当しない項目は空欄のままで構いません。</p></div>
-        <span className="status-chip">記入対象 {activeTargets} / {objectionTargetLabels.length}</span>
-      </div>
-      <div className="objection-target-grid">
-        {objectionTargetLabels.map((item) => <div className="field objection-target" key={item.key}>
-          <label htmlFor={`objection-${item.key}`}>{item.label}</label>
-          <p className="field-help">{item.description}</p>
-          <textarea id={`objection-${item.key}`} rows={4} value={draft.targetChanges[item.key]} onChange={(e) => updateTarget(item.key, e.target.value)} placeholder={`${item.label}について変更したい内容・異議がある場合のみ記入`} />
-        </div>)}
-      </div>
-    </Panel>
-
-    <Panel>
-      <h3>再審査のための共通情報</h3>
-      <p className="muted">複数の変更対象に共通する根拠をまとめて記入します。これらも任意です。</p>
-      <div className="form-stack">
-        <div className="field"><label htmlFor="objection-new-facts">新たに発生した事実</label><textarea id="objection-new-facts" rows={4} value={draft.newFacts} onChange={(e) => updateField('newFacts', e.target.value)} /></div>
-        <div className="field"><label htmlFor="objection-premise">当初前提との相違</label><textarea id="objection-premise" rows={4} value={draft.premiseDifference} onChange={(e) => updateField('premiseDifference', e.target.value)} /></div>
-        <div className="field"><label htmlFor="objection-attempted">既に試した対応</label><textarea id="objection-attempted" rows={4} value={draft.attemptedResponses} onChange={(e) => updateField('attemptedResponses', e.target.value)} /></div>
-        <div className="field"><label htmlFor="objection-continuation">現行方針を継続した場合の問題</label><textarea id="objection-continuation" rows={4} value={draft.continuationProblem} onChange={(e) => updateField('continuationProblem', e.target.value)} /></div>
-        <div className="field"><label htmlFor="objection-context">その他の補足</label><textarea id="objection-context" rows={4} value={draft.additionalContext} onChange={(e) => updateField('additionalContext', e.target.value)} /></div>
-      </div>
-    </Panel>
-
-    <Panel>
-      <h3>提出</h3>
-      <p>異議申し立てZIPには、現在有効な大政奉還のスナップショット、現在の異議、状態監査履歴、再審査指示を同梱します。現在の大政奉還本体は変更しません。</p>
-      <div className="action-row"><Button variant="primary" onClick={onExport}>異議申し立てZIPを書き出す</Button><Button variant="danger" onClick={onReset}>記入内容をリセット</Button></div>
-      <p className="muted">最終更新: {new Date(draft.updatedAt).toLocaleString('ja-JP')}</p>
-    </Panel>
   </div>;
 }

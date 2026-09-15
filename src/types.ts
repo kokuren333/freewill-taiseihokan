@@ -1,5 +1,24 @@
 export type InputMode = 'quick' | 'detailed' | 'memory-assisted';
 
+export interface WebSource {
+  id: string;
+  url: string;
+  title?: string;
+  purpose?: string;
+  dateContext?: string;
+  notes?: string;
+}
+
+export interface DocumentSource {
+  id: string;
+  fileName: string;
+  path?: string;
+  mimeType?: string;
+  content: string;
+  dateContext?: string;
+  importedAt: string;
+}
+
 export interface FreeWillData {
   schemaVersion: '1.0.0';
   mode: InputMode;
@@ -16,6 +35,10 @@ export interface FreeWillData {
   preferences: Record<string, string>;
   goals: Record<string, string>;
   constraints: Record<string, string>;
+  sources?: {
+    urls: WebSource[];
+    documents: DocumentSource[];
+  };
   meta: {
     completedSections: string[];
     skippedSections: string[];
@@ -32,6 +55,28 @@ export interface PolicyData {
   maintenanceConditions: string[];
   changeConditions: string[];
   endConditions: string[];
+  advice?: AdviceRule[];
+}
+
+export interface AdviceFlowNode {
+  id: string;
+  type: 'question' | 'action';
+  label: string;
+  yes?: string;
+  no?: string;
+}
+
+export interface AdviceRule {
+  id: string;
+  title: string;
+  trigger: string;
+  actions: string[];
+  avoidActions: string[];
+  reevaluate: string[];
+  flowchart?: {
+    root: string;
+    nodes: AdviceFlowNode[];
+  };
 }
 
 export interface PersonalModel {
@@ -136,5 +181,4 @@ export interface AppState {
   /** Original imported taiseihoukan.zip when available. Stored as a Blob in IndexedDB. */
   taiseihoukanArchive: TaiseihoukanArchive | null;
   auditHistory: AuditHistoryEntry[];
-  objectionDraft: ObjectionDraft;
 }

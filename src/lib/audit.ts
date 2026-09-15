@@ -13,11 +13,13 @@ const TIE_BREAK_WEIGHT = 0.08;
 
 // 質問数を固定せず、候補が十分に絞れた時点で終了する。
 // ただし1〜2問の偶然の偏りだけで終了しないための安全ガードは残す。
-export const AUDIT_MIN_QUESTIONS = 3;
-export const AUDIT_MIN_INFORMATIVE_ANSWERS = 3;
+// 早期判定は残すが、主状態・副状態を同時に安定させるため最低5問を探索する。
+// これにより通常の回答数をおおむね6〜8問へ寄せ、固定12問にはしない。
+export const AUDIT_MIN_QUESTIONS = 5;
+export const AUDIT_MIN_INFORMATIVE_ANSWERS = 5;
 export const AUDIT_PRIMARY_PROBABILITY_THRESHOLD = 0.40;
 export const AUDIT_PRIMARY_GAP_THRESHOLD = 0.10;
-export const AUDIT_WINNER_RETENTION_THRESHOLD = 0.75;
+export const AUDIT_WINNER_RETENTION_THRESHOLD = 0.80;
 export const AUDIT_CANDIDATE_DISPLAY_THRESHOLD = 0.08;
 
 export function normalize(dist: Distribution): Distribution {
@@ -122,6 +124,15 @@ function noveltyFor(model: AuditModel, question: AuditQuestion, askedIds: Set<st
   return Math.max(0, 1 - maxSimilarity);
 }
 
+function currentnessFor(question: AuditQuestion): number {
+  if (question.text.includes('今この瞬間')) return 1.18;
+  if (question.text.includes('今日')) return 1.12;
+  if (question.text.includes('直近24時間')) return 1.08;
+  if (question.text.includes('直近72時間')) return 0.98;
+  if (question.text.includes('今週')) return 0.90;
+  return 0.82;
+}
+
 function pairwiseDiscrimination(question: AuditQuestion, stateA: string, stateB: string): number {
   const a = temperedWeights(question, stateA);
   const b = temperedWeights(question, stateB);
@@ -157,7 +168,7 @@ export function chooseNextQuestion(model: AuditModel, dist: Distribution, askedI
       const novelty = noveltyFor(model, question, askedIds);
       const tieBreaker = leaderA && leaderB && askedIds.size >= 6 ? pairwiseDiscrimination(question, leaderA, leaderB) : 0;
       // 情報量を主軸にしつつ、同型質問を抑え、探索後半では上位2状態を直接識別できる質問を少し優先する。
-      const selectionScore = informationGain * ((1 - NOVELTY_WEIGHT) + NOVELTY_WEIGHT * novelty)
+      const selectionScore = informationGain * currentnessFor(question) * ((1 - NOVELTY_WEIGHT) + NOVELTY_WEIGHT * novelty)
         + TIE_BREAK_WEIGHT * leaderMass * tieBreaker;
       return { question, informationGain, novelty, tieBreaker, selectionScore };
     })
@@ -168,11 +179,17 @@ export function rankedStates(dist: Distribution) {
   return Object.entries(dist).sort((a, b) => b[1] - a[1]);
 }
 
-function leaderWasStable(model: AuditModel, dist: Distribution, answers: AuditAnswer[]): boolean {
+function topPairWasStable(model: AuditModel, dist: Distribution, answers: AuditAnswer[]): boolean {
   if (answers.length < AUDIT_MIN_QUESTIONS) return false;
-  const leader = rankedStates(dist)[0]?.[0];
-  const previous = distributionAfterAnswers(model, answers.slice(0, -1));
-  return Boolean(leader && rankedStates(previous)[0]?.[0] === leader);
+  const currentPair = rankedStates(dist).slice(0, 2).map(([id]) => id).join('|');
+  if (!currentPair) return false;
+  // 直近3時点で主・副の順序が維持されているかを見る。
+  // 1問だけの偶然の偏りでは停止しない。
+  for (const offset of [1, 2]) {
+    const previous = distributionAfterAnswers(model, answers.slice(0, -offset));
+    if (rankedStates(previous).slice(0, 2).map(([id]) => id).join('|') !== currentPair) return false;
+  }
+  return true;
 }
 
 export function decisionQuality(model: AuditModel, dist: Distribution, askedIds: Set<string>, answers: AuditAnswer[]) {
@@ -182,6 +199,10 @@ export function decisionQuality(model: AuditModel, dist: Distribution, askedIds:
   const second = ranked[1]?.[1] ?? 0;
   const gap = top - second;
   const informativeCount = answers.filter((a) => a.value !== null).length;
+  const third = ranked[2]?.[1] ?? 0;
+  const secondaryGap = second - third;
+  const secondaryIsUseful = second >= 0.10 && (second / Math.max(top, EPS)) >= 0.30;
+  const pairStable = topPairWasStable(model, dist, answers);
   const next = chooseNextQuestion(model, dist, askedIds);
   const winnerRetention = leaderId && next
     ? expectedWinnerRetention(next.question, dist, leaderId)
@@ -190,9 +211,10 @@ export function decisionQuality(model: AuditModel, dist: Distribution, askedIds:
     && informativeCount >= AUDIT_MIN_INFORMATIVE_ANSWERS
     && top >= AUDIT_PRIMARY_PROBABILITY_THRESHOLD
     && gap >= AUDIT_PRIMARY_GAP_THRESHOLD
-    && leaderWasStable(model, dist, answers)
+    && pairStable
+    && (!secondaryIsUseful || secondaryGap >= 0.03)
     && winnerRetention >= AUDIT_WINNER_RETENTION_THRESHOLD;
-  return { actionable, leaderId, top, second, gap, informativeCount, winnerRetention, next };
+  return { actionable, leaderId, top, second, gap, informativeCount, secondaryGap, pairStable, winnerRetention, next };
 }
 
 export function secondaryCandidate(dist: Distribution) {
@@ -216,7 +238,8 @@ export function shouldStop(model: AuditModel, dist: Distribution, askedIds: Set<
   // 最上位候補を暫定ルートとして採用する。これにより必ず判定へ到達する。
   if (answers.length >= AUDIT_MIN_QUESTIONS
     && quality.next.informationGain < 0.005
-    && quality.winnerRetention >= 0.95) {
+    && quality.winnerRetention >= 0.95
+    && quality.pairStable) {
     return { stop: true, reason: 'no-progress' as const };
   }
   return { stop: false, reason: null, next: quality.next };
