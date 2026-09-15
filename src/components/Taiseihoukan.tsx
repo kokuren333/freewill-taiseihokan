@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import type { AuditAnswer, AuditHistoryEntry, TaiseihoukanData } from '../types';
 import type { Distribution } from '../lib/audit';
-import { AUDIT_CANDIDATE_DISPLAY_THRESHOLD, AUDIT_MIN_QUESTIONS, chooseNextQuestion, confidenceFor, decisionQuality, distributionAfterAnswers, influentialAnswers, initialDistribution, rankedStates, secondaryCandidate, shouldStop, updateDistribution } from '../lib/audit';
+import { AUDIT_CANDIDATE_DISPLAY_THRESHOLD, AUDIT_MAX_QUESTIONS, AUDIT_MIN_QUESTIONS, chooseNextQuestion, confidenceFor, decisionQuality, distributionAfterAnswers, influentialAnswers, initialDistribution, rankedStates, secondaryCandidate, shouldStop, updateDistribution } from '../lib/audit';
 import { Button, Notice, Panel, ProgressBar } from './Common';
 
 export function PolicyGraph({ data }: { data: TaiseihoukanData }) {
@@ -134,7 +134,7 @@ export function AuditRunner({ data, onComplete }: { data: TaiseihoukanData; onCo
     <Panel>
       <div className="section-heading"><div><h2>状態監査</h2><p>現在の状態パターンを探索し、事前に定義された行動様式へルーティングします。主状態と副状態の組み合わせが複数回答で安定した時点で終了し、情報が増えなくなった場合は暫定判定します。</p></div><span className="status-chip">通常 6〜8問</span></div>
       <ProgressBar value={answers.length} max={model.questions.length} label={`${answers.length} / ${model.questions.length}`} />
-      <p className="muted">{AUDIT_MIN_QUESTIONS}問目以降、候補が十分に安定した時点で終了します。質問バンクを使い切るか情報が増えなくなった場合も、最上位候補で必ず判定します。AI推論は実行せず、読み込まれた状態モデルと回答だけで次質問を選択します。</p>
+      <p className="muted">{AUDIT_MIN_QUESTIONS}問目以降、主状態が安定した時点で終了します。最大{AUDIT_MAX_QUESTIONS}問で必ず終了し、その時点の最上位候補を判定します。AI推論は実行せず、読み込まれた状態モデルと回答だけで次質問を選択します。</p>
     </Panel>
     {next ? <Panel className="audit-question-panel">
       <p className="eyebrow">QUESTION {answers.length + 1}</p>

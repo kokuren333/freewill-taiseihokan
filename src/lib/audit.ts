@@ -13,13 +13,14 @@ const TIE_BREAK_WEIGHT = 0.08;
 
 // 質問数を固定せず、候補が十分に絞れた時点で終了する。
 // ただし1〜2問の偶然の偏りだけで終了しないための安全ガードは残す。
-// 早期判定は残すが、主状態・副状態を同時に安定させるため最低5問を探索する。
-// これにより通常の回答数をおおむね6〜8問へ寄せ、固定12問にはしない。
-export const AUDIT_MIN_QUESTIONS = 5;
-export const AUDIT_MIN_INFORMATIVE_ANSWERS = 5;
+// 早期判定は残しつつ、曖昧なモデルでも質問が無限に続かないよう上限を設ける。
+// 通常は6〜8問を目標にし、12問目で必ず判定する。
+export const AUDIT_MIN_QUESTIONS = 4;
+export const AUDIT_MIN_INFORMATIVE_ANSWERS = 4;
+export const AUDIT_MAX_QUESTIONS = 12;
 export const AUDIT_PRIMARY_PROBABILITY_THRESHOLD = 0.40;
 export const AUDIT_PRIMARY_GAP_THRESHOLD = 0.10;
-export const AUDIT_WINNER_RETENTION_THRESHOLD = 0.80;
+export const AUDIT_WINNER_RETENTION_THRESHOLD = 0.70;
 export const AUDIT_CANDIDATE_DISPLAY_THRESHOLD = 0.08;
 
 export function normalize(dist: Distribution): Distribution {
@@ -179,17 +180,11 @@ export function rankedStates(dist: Distribution) {
   return Object.entries(dist).sort((a, b) => b[1] - a[1]);
 }
 
-function topPairWasStable(model: AuditModel, dist: Distribution, answers: AuditAnswer[]): boolean {
+function leaderWasStable(model: AuditModel, dist: Distribution, answers: AuditAnswer[]): boolean {
   if (answers.length < AUDIT_MIN_QUESTIONS) return false;
-  const currentPair = rankedStates(dist).slice(0, 2).map(([id]) => id).join('|');
-  if (!currentPair) return false;
-  // 直近3時点で主・副の順序が維持されているかを見る。
-  // 1問だけの偶然の偏りでは停止しない。
-  for (const offset of [1, 2]) {
-    const previous = distributionAfterAnswers(model, answers.slice(0, -offset));
-    if (rankedStates(previous).slice(0, 2).map(([id]) => id).join('|') !== currentPair) return false;
-  }
-  return true;
+  const leader = rankedStates(dist)[0]?.[0];
+  const previous = distributionAfterAnswers(model, answers.slice(0, -1));
+  return Boolean(leader && rankedStates(previous)[0]?.[0] === leader);
 }
 
 export function decisionQuality(model: AuditModel, dist: Distribution, askedIds: Set<string>, answers: AuditAnswer[]) {
@@ -199,10 +194,7 @@ export function decisionQuality(model: AuditModel, dist: Distribution, askedIds:
   const second = ranked[1]?.[1] ?? 0;
   const gap = top - second;
   const informativeCount = answers.filter((a) => a.value !== null).length;
-  const third = ranked[2]?.[1] ?? 0;
-  const secondaryGap = second - third;
-  const secondaryIsUseful = second >= 0.10 && (second / Math.max(top, EPS)) >= 0.30;
-  const pairStable = topPairWasStable(model, dist, answers);
+  const leaderStable = leaderWasStable(model, dist, answers);
   const next = chooseNextQuestion(model, dist, askedIds);
   const winnerRetention = leaderId && next
     ? expectedWinnerRetention(next.question, dist, leaderId)
@@ -211,10 +203,9 @@ export function decisionQuality(model: AuditModel, dist: Distribution, askedIds:
     && informativeCount >= AUDIT_MIN_INFORMATIVE_ANSWERS
     && top >= AUDIT_PRIMARY_PROBABILITY_THRESHOLD
     && gap >= AUDIT_PRIMARY_GAP_THRESHOLD
-    && pairStable
-    && (!secondaryIsUseful || secondaryGap >= 0.03)
+    && leaderStable
     && winnerRetention >= AUDIT_WINNER_RETENTION_THRESHOLD;
-  return { actionable, leaderId, top, second, gap, informativeCount, secondaryGap, pairStable, winnerRetention, next };
+  return { actionable, leaderId, top, second, gap, informativeCount, leaderStable, winnerRetention, next };
 }
 
 export function secondaryCandidate(dist: Distribution) {
@@ -232,6 +223,7 @@ export function secondaryCandidate(dist: Distribution) {
 
 export function shouldStop(model: AuditModel, dist: Distribution, askedIds: Set<string>, answers: AuditAnswer[]) {
   const quality = decisionQuality(model, dist, askedIds, answers);
+  if (answers.length >= AUDIT_MAX_QUESTIONS) return { stop: true, reason: 'max-questions' as const };
   if (!quality.next) return { stop: true, reason: 'no-questions' as const };
   if (quality.actionable) return { stop: true, reason: 'confidence' as const };
   // 固定問数では打ち切らず、追加質問から得られる情報がほぼなくなったら
@@ -239,7 +231,7 @@ export function shouldStop(model: AuditModel, dist: Distribution, askedIds: Set<
   if (answers.length >= AUDIT_MIN_QUESTIONS
     && quality.next.informationGain < 0.005
     && quality.winnerRetention >= 0.95
-    && quality.pairStable) {
+    && quality.leaderStable) {
     return { stop: true, reason: 'no-progress' as const };
   }
   return { stop: false, reason: null, next: quality.next };
