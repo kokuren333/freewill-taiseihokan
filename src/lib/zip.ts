@@ -1,6 +1,6 @@
 import Ajv from 'ajv';
 import JSZip from 'jszip';
-import type { AppState, AuditHistoryEntry, FreeWillData, TaiseihoukanArchive, TaiseihoukanData } from '../types';
+import type { AppState, AuditHistoryEntry, DocumentSource, FreeWillData, TaiseihoukanArchive, TaiseihoukanData } from '../types';
 import { auditHistorySchema, freeWillSchema, taiseihoukanBundleSchema } from './schemas';
 
 const ajv = new Ajv({ allErrors: true, strict: false });
@@ -33,9 +33,9 @@ function freeWillSummary(data: FreeWillData) {
   const prefLines = Object.entries(data.preferences).filter(([, v]) => v.trim()).map(([k, v]) => `- ${k}: ${v}`);
   const completed = data.meta.completedSections.length;
   const answered = Object.values(data.psychometrics.responses).filter((v) => typeof v === 'number').length;
-  const sources = data.sources ?? { urls: [], documents: [] };
+  const sources: NonNullable<FreeWillData['sources']> = data.sources ?? { urls: [], documents: [] };
   const urlLines = sources.urls.map((source) => `- ${source.title || source.url}: ${source.url}${source.dateContext ? `（${source.dateContext}）` : ''}`);
-  const documentLines = sources.documents.map((source) => `- ${source.fileName}${source.dateContext ? `（${source.dateContext}）` : ''}`);
+  const documentLines = sources.documents.map((source) => `- ${source.fileName}${source.dateContext ? `（${source.dateContext}）` : ''}（元ファイル添付）`);
   return `# 自由意志データ要約\n\n- schemaVersion: ${data.schemaVersion}\n- mode: ${data.mode}\n- updatedAt: ${data.updatedAt}\n- 詳細セクション完了: ${completed} / 14\n- 心理質問回答数: ${answered}\n- 回答一貫性: ${data.psychometrics.consistency}\n\n## 基礎情報\n${profileLines.join('\n') || '- 記載なし'}\n\n## 希望・制約等\n${prefLines.join('\n') || '- 記載なし'}\n\n## 参照資料\n### URL\n${urlLines.join('\n') || '- なし'}\n### 文書\n${documentLines.join('\n') || '- なし'}\n`;
 }
 
@@ -82,21 +82,31 @@ const OBJECTION_PROMPT = `# generation_prompt\n\nREADME_FOR_CHATGPT.md を最初
 export async function exportFreeWillZip(data: FreeWillData) {
   const zip = new JSZip();
   const root = zip.folder('free-will')!;
+  const sources: NonNullable<FreeWillData['sources']> = data.sources ?? { urls: [], documents: [] };
+  const documentPath = (source: DocumentSource) => `sources/documents/${source.id}-${source.fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+  const documentPaths = sources.documents.filter((source) => source.data || source.content).map(documentPath);
   const files = [
     'free-will.json', 'summary.md', 'README_FOR_CHATGPT.md', 'generation_prompt.md',
     'schemas/free-will.schema.json', 'schemas/taiseihoukan.schema.json',
+    ...documentPaths,
   ];
   const manifest = {
     format: 'free-will', schemaVersion: '1.0.0', createdAt: new Date().toISOString(), files,
     mode: data.mode,
   };
   root.file('manifest.json', json(manifest));
-  root.file('free-will.json', json(data));
+  const metadata = { ...data, sources: { urls: sources.urls, documents: sources.documents.map((source) => { const { data: _data, content: _content, ...metadataSource } = source; return { ...metadataSource, storagePath: source.storagePath || (_data || _content ? documentPath(source) : undefined) }; }) } };
+  root.file('free-will.json', json(metadata));
   root.file('summary.md', freeWillSummary(data));
   root.file('README_FOR_CHATGPT.md', CURRENT_AUDIT_MODEL_SPEC + README_FOR_CHATGPT + AUDIT_MODEL_GENERATION_RULES);
   root.file('generation_prompt.md', CURRENT_AUDIT_MODEL_SPEC + GENERATION_PROMPT + AUDIT_MODEL_GENERATION_RULES);
   root.folder('schemas')!.file('free-will.schema.json', json(freeWillSchema));
   root.folder('schemas')!.file('taiseihoukan.schema.json', json(taiseihoukanBundleSchema));
+  for (const source of sources.documents) {
+    const path = source.storagePath || documentPath(source);
+    if (source.data) root.file(path, source.data);
+    else if (source.content) root.file(path, source.content);
+  }
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
   downloadBlob(blob, `free-will_${dateStamp()}.zip`);
 }
@@ -208,6 +218,11 @@ async function readJson(zip: JSZip, suffix: string) {
   try { return JSON.parse(text); } catch { throw new Error(`${suffix}: JSONを解析できません`); }
 }
 
+async function readBlob(zip: JSZip, suffix: string, mimeType?: string) {
+  const file = findFile(zip, suffix);
+  return file ? file.async('blob').then((blob) => mimeType ? new Blob([blob], { type: mimeType }) : blob) : undefined;
+}
+
 async function readText(zip: JSZip, suffix: string, optional = false) {
   const file = findFile(zip, suffix);
   if (!file) {
@@ -231,7 +246,14 @@ export async function importFreeWillZip(file: File): Promise<FreeWillData> {
   if (manifest.schemaVersion !== '1.0.0') throw new Error(`manifest.json: 未対応 schemaVersion ${String(manifest.schemaVersion)}`);
   const data = await readJson(zip, 'free-will.json');
   if (!validateFreeWill(data)) throw new Error(ajvErrors('free-will.json: ', validateFreeWill.errors));
-  return data as FreeWillData;
+  const freeWill = data as FreeWillData;
+  if (freeWill.sources?.documents?.length) {
+    freeWill.sources.documents = await Promise.all(freeWill.sources.documents.map(async (source) => ({
+      ...source,
+      data: source.storagePath ? await readBlob(zip, source.storagePath, source.mimeType) : undefined,
+    })));
+  }
+  return freeWill;
 }
 
 function validateAuditIntegrity(data: TaiseihoukanData) {

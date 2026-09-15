@@ -25,7 +25,7 @@ export const freeWillSchema = {
       type: 'object', additionalProperties: false, required: ['urls', 'documents'],
       properties: {
         urls: { type: 'array', items: { type: 'object', required: ['id', 'url'], additionalProperties: true, properties: { id: { type: 'string' }, url: { type: 'string' }, title: { type: 'string' }, purpose: { type: 'string' }, dateContext: { type: 'string' }, notes: { type: 'string' } } } },
-        documents: { type: 'array', items: { type: 'object', required: ['id', 'fileName', 'content', 'importedAt'], additionalProperties: true, properties: { id: { type: 'string' }, fileName: { type: 'string' }, path: { type: 'string' }, mimeType: { type: 'string' }, content: { type: 'string' }, dateContext: { type: 'string' }, importedAt: { type: 'string' } } } }
+        documents: { type: 'array', items: { type: 'object', required: ['id', 'fileName', 'importedAt'], additionalProperties: true, properties: { id: { type: 'string' }, fileName: { type: 'string' }, path: { type: 'string' }, storagePath: { type: 'string' }, mimeType: { type: 'string' }, size: { type: 'number' }, content: { type: 'string' }, importedAt: { type: 'string' } } } }
       }
     },
     meta: {

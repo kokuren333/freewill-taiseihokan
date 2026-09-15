@@ -13,8 +13,11 @@ export interface DocumentSource {
   id: string;
   fileName: string;
   path?: string;
+  storagePath?: string;
   mimeType?: string;
-  content: string;
+  data?: Blob;
+  size?: number;
+  content?: string;
   dateContext?: string;
   importedAt: string;
 }

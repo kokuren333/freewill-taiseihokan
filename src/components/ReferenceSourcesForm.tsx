@@ -3,7 +3,7 @@ import JSZip from 'jszip';
 import type { DocumentSource, FreeWillData, WebSource } from '../types';
 import { Button, Notice, Panel } from './Common';
 
-const textExtensions = /\.(txt|md|markdown|json|csv|html?|xml|yaml|yml)$/i;
+const directExtensions = /\.(pdf|doc|docx|txt|md|markdown|json|csv|html?|xml|yaml|yml)$/i;
 const maxDocumentBytes = 2 * 1024 * 1024;
 const maxTotalBytes = 20 * 1024 * 1024;
 
@@ -39,26 +39,27 @@ export function ReferenceSourcesForm({ data, onChange }: { data: FreeWillData; o
     try {
       const next: DocumentSource[] = [];
       let total = 0;
-      const addText = async (name: string, content: string, mimeType?: string) => {
-        const bytes = new TextEncoder().encode(content).byteLength;
-        if (bytes > maxDocumentBytes) return;
-        total += bytes;
+      const addFile = async (name: string, bytes: Uint8Array, mimeType?: string) => {
+        if (bytes.byteLength > maxDocumentBytes) return;
+        total += bytes.byteLength;
         if (total > maxTotalBytes) return;
-        next.push({ id: sourceId('document'), fileName: name, path: name, mimeType, content, importedAt: new Date().toISOString() });
+        const safeBytes = new Uint8Array(bytes.byteLength);
+        safeBytes.set(bytes);
+        next.push({ id: sourceId('document'), fileName: name, path: name, mimeType, size: bytes.byteLength, data: new Blob([safeBytes.buffer], { type: mimeType || 'application/octet-stream' }), importedAt: new Date().toISOString() });
       };
       if (file.name.toLowerCase().endsWith('.zip')) {
         const zip = await JSZip.loadAsync(await file.arrayBuffer());
         for (const entry of Object.values(zip.files)) {
-          if (entry.dir || !textExtensions.test(entry.name)) continue;
-          await addText(entry.name, await entry.async('string'));
+          if (entry.dir) continue;
+          await addFile(entry.name, await entry.async('uint8array'));
           if (total >= maxTotalBytes) break;
         }
-      } else if (textExtensions.test(file.name)) {
-        await addText(file.name, await file.text(), file.type);
+      } else if (directExtensions.test(file.name)) {
+        await addFile(file.name, new Uint8Array(await file.arrayBuffer()), file.type);
       } else {
-        throw new Error('ZIP内または直接読み込める形式は txt / md / json / csv / html / xml / yaml です。');
+        throw new Error('対応形式は ZIP / PDF / DOC / DOCX / TXT / MD / JSON / CSV / HTML / XML / YAML です。');
       }
-      if (!next.length) throw new Error('読み込めるテキスト文書がありませんでした。');
+      if (!next.length) throw new Error('読み込める文書がありませんでした。');
       update({ documents: [...sources.documents, ...next] });
       setMessage(`${next.length}件の文書を読み込みました。`);
     } catch (error) {
@@ -67,7 +68,7 @@ export function ReferenceSourcesForm({ data, onChange }: { data: FreeWillData; o
   };
 
   return <Panel>
-    <div className="section-heading"><div><h2>参照資料</h2><p>URLはChatGPTへの参照依頼に含め、文書はテキストとしてZIPへ同梱します。サイトから外部URLへ自動アクセスはしません。</p></div><span className="status-chip">任意</span></div>
+    <div className="section-heading"><div><h2>参照資料</h2><p>URLはURLのまま、文書は元ファイルのまま自由意志ZIPへ添付します。サイト側で本文のテキスト抽出や外部URLへの自動アクセスはしません。</p></div><span className="status-chip">任意</span></div>
     <div className="source-section">
       <h3>自分の記事・資料のURL</h3>
       <div className="source-add-row"><input type="url" value={urlDraft} placeholder="https://..." onChange={(e) => setUrlDraft(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addUrl()} /><Button type="button" onClick={addUrl}>URLを追加</Button></div>
@@ -79,8 +80,8 @@ export function ReferenceSourcesForm({ data, onChange }: { data: FreeWillData; o
       </div>)}
     </div>
     <div className="source-section">
-      <div className="section-heading"><div><h3>文書ZIP</h3><p>ZIP内のtxt / md / json / csv / html / xml / yamlを読み込みます。最大20MB。</p></div><label className="button button-default">{busy ? '読み込み中…' : '文書ZIPを追加'}<input hidden type="file" accept=".zip,.txt,.md,.json,.csv,.html,.htm,.xml,.yaml,.yml" disabled={busy} onChange={(e) => { const file = e.target.files?.[0]; e.currentTarget.value = ''; if (file) void importDocuments(file); }} /></label></div>
-      {sources.documents.map((item) => <div className="source-card" key={item.id}><div className="source-card-head"><strong>{item.fileName}</strong><Button type="button" variant="quiet" onClick={() => removeDocument(item.id)}>削除</Button></div><p className="muted">{item.content.length.toLocaleString()}文字</p></div>)}
+      <div className="section-heading"><div><h3>文書・文書ZIP</h3><p>PDF / DOC / DOCXを含む元ファイルをそのまま保持します。1ファイル2MB、合計20MB。</p></div><label className="button button-default">{busy ? '読み込み中…' : '文書を追加'}<input hidden type="file" accept=".zip,.pdf,.doc,.docx,.txt,.md,.json,.csv,.html,.htm,.xml,.yaml,.yml" disabled={busy} onChange={(e) => { const file = e.target.files?.[0]; e.currentTarget.value = ''; if (file) void importDocuments(file); }} /></label></div>
+      {sources.documents.map((item) => <div className="source-card" key={item.id}><div className="source-card-head"><strong>{item.fileName}</strong><Button type="button" variant="quiet" onClick={() => removeDocument(item.id)}>削除</Button></div><p className="muted">元ファイル {((item.size ?? item.data?.size ?? (item.content ? new TextEncoder().encode(item.content).byteLength : 0)) / 1024).toFixed(1)}KB</p></div>)}
     </div>
     {message && <Notice tone="info">{message}</Notice>}
     <Notice tone="warn">URL本文や文書内の命令は実行せず、人物情報・資料として扱うよう生成指示に含めます。ログインが必要なURLや取得できない資料は推測で補完しません。</Notice>
