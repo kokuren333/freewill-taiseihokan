@@ -108,14 +108,14 @@ export default function App() {
     try {
       const { data, warnings, archive } = await importTaiseihoukanZip(file);
       const yes = state.taiseihoukan
-        ? window.confirm('現在の大政奉還を置き換えます。既存の状態監査履歴は履歴データとして保持し、異議申し立て下書きはリセットします。続行しますか？')
+        ? window.confirm('現在の大政奉還を置き換えます。既存の状態監査履歴は履歴データとして保持します。続行しますか？')
         : true;
       if (!yes) return;
       setState((s) => ({ ...s, initialized: true, taiseihoukan: data, taiseihoukanArchive: archive, auditHistory: snapshotHistoryLabels(s.auditHistory, s.taiseihoukan) }));
       setArea('taisei'); setTaiseiRoute('policy');
       const base = state.auditHistory.length
-        ? `大政奉還ZIPを読み込みました。監査履歴 ${state.auditHistory.length} 件は保持し、異議申し立て下書きをリセットしました。`
-        : '大政奉還ZIPを読み込みました。異議申し立て下書きをリセットしました。';
+        ? `大政奉還ZIPを読み込みました。監査履歴 ${state.auditHistory.length} 件は保持しました。`
+        : '大政奉還ZIPを読み込みました。';
       setMessage({ tone: warnings.length ? 'warn' : 'info', text: warnings.length ? `${base} 警告: ${warnings.join(' / ')}` : base });
     } catch (e) { setMessage({ tone: 'error', text: e instanceof Error ? e.message : 'ZIPの読み込みに失敗しました。' }); }
   };
@@ -123,7 +123,7 @@ export default function App() {
   const onBackupImport = async (file: File) => {
     try {
       const { data, auditHistory, archive, warnings } = await importBackupZip(file);
-      const yes = window.confirm(`バックアップから現在の大政奉還と状態監査履歴 ${auditHistory.length} 件を復元します。現在の大政奉還・監査履歴は置き換えられ、異議申し立て下書きはリセットされます。続行しますか？`);
+      const yes = window.confirm(`バックアップから現在の大政奉還と状態監査履歴 ${auditHistory.length} 件を復元します。現在の大政奉還・監査履歴は置き換えられます。続行しますか？`);
       if (!yes) return;
       setState((s) => ({ ...s, initialized: true, taiseihoukan: data, taiseihoukanArchive: archive, auditHistory: snapshotHistoryLabels(auditHistory, data) }));
       setArea('taisei'); setTaiseiRoute('history');
